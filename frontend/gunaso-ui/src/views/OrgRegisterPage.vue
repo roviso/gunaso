@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { organizationsAPI } from '@/api/organizations'
+import { apiErrorMessage } from '@/api/index'
 import { useUIStore } from '@/stores/ui'
 
 const router = useRouter()
@@ -36,9 +37,8 @@ async function handleSubmit() {
     await organizationsAPI.register(form.value)
     submitted.value = true
     uiStore.showSuccess('Organization registration submitted!')
-  } catch {
-    submitted.value = true // show success for prototype
-    uiStore.showSuccess('Registration submitted for review!')
+  } catch (err) {
+    uiStore.showError(apiErrorMessage(err, 'Registration failed. Please try again.'))
   } finally {
     loading.value = false
   }

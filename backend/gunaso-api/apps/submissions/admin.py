@@ -18,6 +18,14 @@ class SubmissionAdmin(admin.ModelAdmin):
 
 @admin.register(StatusUpdate)
 class StatusUpdateAdmin(admin.ModelAdmin):
+    """Append-only audit log: records cannot be edited or deleted, even by admins."""
+
     list_display = ['submission', 'updated_by', 'old_status', 'new_status', 'created_at']
     list_filter = ['new_status']
     readonly_fields = ['created_at']
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

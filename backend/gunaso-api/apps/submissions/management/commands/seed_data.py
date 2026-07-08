@@ -201,8 +201,8 @@ class Command(BaseCommand):
             ),
             dict(
                 organization=org2, category=cats['kmc_road'],
-                citizen=None, citizen_name='Anonymous Citizen',
-                citizen_email='anon@placeholder.com', citizen_phone='',
+                citizen=None, citizen_name='',
+                citizen_email='', citizen_phone='',
                 submission_type='complaint', priority='urgent', status='submitted',
                 is_anonymous=True,
                 title='Large pothole causing accidents at Baneshwor chowk',
@@ -271,7 +271,17 @@ class Command(BaseCommand):
             is_anon = data.pop('is_anonymous', False)
             ref = f'GUN-{year}-{(existing + i + 1):05d}'
             if not Submission.objects.filter(reference_number=ref).exists():
-                Submission.objects.create(reference_number=ref, is_anonymous=is_anon, **data)
+                submission = Submission.objects.create(
+                    reference_number=ref, is_anonymous=is_anon, **data
+                )
+                if submission.status != 'submitted':
+                    StatusUpdate.objects.create(
+                        submission=submission,
+                        updated_by=submission.organization.admin,
+                        old_status='submitted',
+                        new_status=submission.status,
+                        note='Status updated by the organization.',
+                    )
                 created += 1
 
         self.stdout.write(self.style.SUCCESS(f'    OK {created} submissions created'))

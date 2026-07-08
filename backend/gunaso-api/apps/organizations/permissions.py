@@ -1,4 +1,5 @@
 from rest_framework import permissions
+from rest_framework.exceptions import PermissionDenied
 
 
 class IsOrgAdmin(permissions.BasePermission):
@@ -13,11 +14,16 @@ class IsOrgAdmin(permissions.BasePermission):
 
 
 class IsOrgAdminOfOrg(permissions.BasePermission):
-    """Allow access only to the org_admin who owns this organization."""
+    """Allow access only to the org_admin who owns this organization (or platform staff)."""
+
+    message = "Only this organization's admin can perform this action."
 
     def has_object_permission(self, request, view, obj):
-        return (
-            request.user
-            and request.user.is_authenticated
-            and obj.admin == request.user
+        return request.user.is_authenticated and (
+            obj.admin_id == request.user.id or request.user.is_staff
         )
+
+    def check(self, request, org):
+        """Imperative form for views that resolve the organization themselves."""
+        if not self.has_object_permission(request, None, org):
+            raise PermissionDenied(self.message)

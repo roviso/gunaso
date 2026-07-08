@@ -26,7 +26,7 @@ function isActive(path) {
 }
 
 async function handleLogout() {
-  authStore.logout()
+  await authStore.logout()
   userMenuOpen.value = false
   mobileOpen.value = false
   router.push('/')

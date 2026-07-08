@@ -1,57 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { organizationsAPI } from '@/api/organizations'
-
-const MOCK_ORGS = [
-  {
-    id: 1, slug: 'nepal-telecom', name: 'Nepal Telecom', category: 'Telecom',
-    description: 'State-owned telecommunications company of Nepal providing internet, mobile, and landline services across the country.',
-    verified: true, logo: null, submission_count: 1247, avg_resolution_days: 8,
-    website: 'https://www.ntc.net.np', resolved_percent: 76
-  },
-  {
-    id: 2, slug: 'ncell', name: 'Ncell', category: 'Telecom',
-    description: 'Private telecommunications company providing mobile and data services across Nepal with nationwide coverage.',
-    verified: true, logo: null, submission_count: 934, avg_resolution_days: 5,
-    website: 'https://www.ncell.axiata.com', resolved_percent: 82
-  },
-  {
-    id: 3, slug: 'nea', name: 'Nepal Electricity Authority', category: 'Government',
-    description: 'Government-owned corporation responsible for generation, transmission, and distribution of electricity in Nepal.',
-    verified: true, logo: null, submission_count: 2103, avg_resolution_days: 14,
-    website: 'https://www.nea.org.np', resolved_percent: 68
-  },
-  {
-    id: 4, slug: 'nrb', name: 'Nepal Rastra Bank', category: 'Bank',
-    description: 'Central bank of Nepal responsible for monetary policy, banking supervision, and financial sector regulation.',
-    verified: true, logo: null, submission_count: 412, avg_resolution_days: 10,
-    website: 'https://www.nrb.org.np', resolved_percent: 89
-  },
-  {
-    id: 5, slug: 'bir-hospital', name: 'Bir Hospital', category: 'Hospital',
-    description: 'The oldest and largest public hospital in Nepal providing comprehensive healthcare services to citizens.',
-    verified: true, logo: null, submission_count: 756, avg_resolution_days: 7,
-    website: 'https://www.birhospital.gov.np', resolved_percent: 71
-  },
-  {
-    id: 6, slug: 'ktm-metro', name: 'Kathmandu Metropolitan City', category: 'Government',
-    description: 'Local government body responsible for urban planning, infrastructure, and civic services in the Kathmandu metro area.',
-    verified: false, logo: null, submission_count: 589, avg_resolution_days: 18,
-    website: 'https://kathmandumetro.gov.np', resolved_percent: 55
-  },
-  {
-    id: 7, slug: 'nabil-bank', name: 'Nabil Bank', category: 'Bank',
-    description: 'One of Nepal\'s leading private commercial banks offering retail, corporate, and digital banking services.',
-    verified: true, logo: null, submission_count: 328, avg_resolution_days: 4,
-    website: 'https://www.nabilbank.com', resolved_percent: 91
-  },
-  {
-    id: 8, slug: 'patan-hospital', name: 'Patan Hospital', category: 'Hospital',
-    description: 'A leading teaching hospital in Nepal known for quality healthcare and medical education.',
-    verified: true, logo: null, submission_count: 445, avg_resolution_days: 6,
-    website: 'https://www.patanhospital.org.np', resolved_percent: 78
-  }
-]
+import { apiErrorMessage } from '@/api/index'
 
 export const useOrganizationStore = defineStore('organization', () => {
   const organizations = ref([])
@@ -60,16 +10,28 @@ export const useOrganizationStore = defineStore('organization', () => {
   const error = ref(null)
   const totalCount = ref(0)
 
+  const staff = ref([])
+  const staffLoading = ref(false)
+  const staffError = ref(null)
+
+  const qrCode = ref(null)
+  const qrLoading = ref(false)
+  const qrError = ref(null)
+
+  const dashboardStats = ref(null)
+  const statsLoading = ref(false)
+
   async function fetchOrganizations(params = {}) {
     loading.value = true
     error.value = null
     try {
       const { data } = await organizationsAPI.list(params)
       organizations.value = data.results || data
-      totalCount.value = data.count || organizations.value.length
-    } catch {
-      organizations.value = MOCK_ORGS
-      totalCount.value = MOCK_ORGS.length
+      totalCount.value = data.count ?? organizations.value.length
+    } catch (err) {
+      error.value = apiErrorMessage(err, 'Could not load organizations.')
+      organizations.value = []
+      totalCount.value = 0
     } finally {
       loading.value = false
     }
@@ -82,18 +44,91 @@ export const useOrganizationStore = defineStore('organization', () => {
     try {
       const { data } = await organizationsAPI.getBySlug(slug)
       currentOrg.value = data
-    } catch {
-      currentOrg.value = MOCK_ORGS.find((o) => o.slug === slug) || null
-      if (!currentOrg.value) error.value = 'Organization not found.'
+    } catch (err) {
+      error.value = apiErrorMessage(err, 'Organization not found.')
     } finally {
       loading.value = false
     }
   }
 
-  function getMockOrgs() { return MOCK_ORGS }
+  async function fetchMyOrg() {
+    loading.value = true
+    error.value = null
+    try {
+      const { data } = await organizationsAPI.getMine()
+      currentOrg.value = data
+      return data
+    } catch (err) {
+      error.value = apiErrorMessage(err, 'Could not load your organization.')
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function fetchStaff(slug) {
+    staffLoading.value = true
+    staffError.value = null
+    try {
+      const { data } = await organizationsAPI.getStaff(slug)
+      staff.value = data.results || data
+    } catch (err) {
+      staffError.value = apiErrorMessage(err, 'Could not load staff members.')
+      staff.value = []
+    } finally {
+      staffLoading.value = false
+    }
+  }
+
+  async function addStaff(slug, payload) {
+    const { data } = await organizationsAPI.addStaff(slug, payload)
+    staff.value = [...staff.value, data]
+    return data
+  }
+
+  async function removeStaff(slug, staffId) {
+    await organizationsAPI.removeStaff(slug, staffId)
+    staff.value = staff.value.filter((s) => s.id !== staffId)
+  }
+
+  async function updateStaffRole(slug, staffId, role) {
+    const { data } = await organizationsAPI.updateStaffRole(slug, staffId, { role })
+    const idx = staff.value.findIndex((s) => s.id === staffId)
+    if (idx !== -1) staff.value[idx] = { ...staff.value[idx], ...data }
+    return data
+  }
+
+  async function fetchQRCode(slug) {
+    qrLoading.value = true
+    qrError.value = null
+    try {
+      const { data } = await organizationsAPI.getQRCode(slug)
+      qrCode.value = data
+    } catch (err) {
+      qrError.value = apiErrorMessage(err, 'Could not load QR code.')
+    } finally {
+      qrLoading.value = false
+    }
+  }
+
+  async function fetchStats(slug) {
+    statsLoading.value = true
+    try {
+      const { data } = await organizationsAPI.getStats(slug)
+      dashboardStats.value = data
+    } catch {
+      dashboardStats.value = null
+    } finally {
+      statsLoading.value = false
+    }
+  }
 
   return {
     organizations, currentOrg, loading, error, totalCount,
-    fetchOrganizations, fetchOrgBySlug, getMockOrgs
+    staff, staffLoading, staffError,
+    qrCode, qrLoading, qrError,
+    dashboardStats, statsLoading,
+    fetchOrganizations, fetchOrgBySlug, fetchMyOrg,
+    fetchStaff, addStaff, removeStaff, updateStaffRole,
+    fetchQRCode, fetchStats,
   }
 })

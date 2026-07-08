@@ -14,12 +14,13 @@ function formatDate(dateStr) {
 }
 
 const statusConfig = {
-  submitted:  { label: 'Submitted',  color: 'bg-gray-400',   ring: 'ring-gray-200 dark:ring-gray-700' },
-  pending:    { label: 'Pending',    color: 'bg-amber-500',  ring: 'ring-amber-100 dark:ring-amber-900/30' },
-  in_review:  { label: 'In Review',  color: 'bg-blue-500',   ring: 'ring-blue-100 dark:ring-blue-900/30' },
-  resolved:   { label: 'Resolved',   color: 'bg-green-500',  ring: 'ring-green-100 dark:ring-green-900/30' },
-  closed:     { label: 'Closed',     color: 'bg-gray-500',   ring: 'ring-gray-200 dark:ring-gray-700' },
-  rejected:   { label: 'Rejected',   color: 'bg-red-500',    ring: 'ring-red-100 dark:ring-red-900/30' },
+  submitted:    { label: 'Submitted',    color: 'bg-gray-400',   ring: 'ring-gray-200 dark:ring-gray-700' },
+  acknowledged: { label: 'Acknowledged', color: 'bg-cyan-500',   ring: 'ring-cyan-100 dark:ring-cyan-900/30' },
+  in_review:    { label: 'In Review',    color: 'bg-blue-500',   ring: 'ring-blue-100 dark:ring-blue-900/30' },
+  resolved:     { label: 'Resolved',     color: 'bg-green-500',  ring: 'ring-green-100 dark:ring-green-900/30' },
+  escalated:    { label: 'Escalated',    color: 'bg-orange-500', ring: 'ring-orange-100 dark:ring-orange-900/30' },
+  closed:       { label: 'Closed',       color: 'bg-gray-500',   ring: 'ring-gray-200 dark:ring-gray-700' },
+  rejected:     { label: 'Rejected',     color: 'bg-red-500',    ring: 'ring-red-100 dark:ring-red-900/30' },
 }
 
 function getConfig(status) {

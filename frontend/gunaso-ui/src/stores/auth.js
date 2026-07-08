@@ -1,30 +1,68 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { authAPI } from '@/api/auth'
+import { apiErrorMessage, refreshSession, setAccessToken } from '@/api/index'
+
+const USER_KEY = 'gunaso_user'
+
+function readStoredUser() {
+  try {
+    return JSON.parse(localStorage.getItem(USER_KEY) || 'null')
+  } catch {
+    return null
+  }
+}
 
 export const useAuthStore = defineStore('auth', () => {
-  const user = ref(JSON.parse(localStorage.getItem('gunaso_user') || 'null'))
-  const token = ref(localStorage.getItem('gunaso_token') || null)
+  // Only the (non-sensitive) profile is persisted; tokens never touch storage.
+  const user = ref(readStoredUser())
   const loading = ref(false)
   const error = ref(null)
+  const initialized = ref(false)
 
-  const isAuthenticated = computed(() => !!token.value)
-  const isCitizen = computed(() => user.value?.user_type === 'citizen' || (user.value && !user.value?.user_type))
+  const isAuthenticated = computed(() => !!user.value)
+  const isCitizen = computed(() => user.value?.user_type === 'citizen')
   const isOrgAdmin = computed(() => user.value?.user_type === 'org_admin')
   const userInitial = computed(() => user.value?.name?.[0]?.toUpperCase() || 'U')
+
+  function setSession(data) {
+    setAccessToken(data.access)
+    user.value = data.user
+    localStorage.setItem(USER_KEY, JSON.stringify(data.user))
+  }
+
+  function clearSession() {
+    setAccessToken(null)
+    user.value = null
+    localStorage.removeItem(USER_KEY)
+  }
+
+  /** Restore the session from the httpOnly refresh cookie on app start. */
+  async function init() {
+    if (initialized.value) return
+    initialized.value = true
+    window.addEventListener('gunaso:session-expired', clearSession)
+    if (!user.value) return
+    try {
+      const data = await refreshSession()
+      if (data.user) {
+        user.value = data.user
+        localStorage.setItem(USER_KEY, JSON.stringify(data.user))
+      }
+    } catch {
+      clearSession()
+    }
+  }
 
   async function login(credentials) {
     loading.value = true
     error.value = null
     try {
       const { data } = await authAPI.login(credentials)
-      token.value = data.access
-      user.value = data.user
-      localStorage.setItem('gunaso_token', data.access)
-      localStorage.setItem('gunaso_user', JSON.stringify(data.user))
+      setSession(data)
       return data
     } catch (err) {
-      error.value = err.response?.data?.detail || err.response?.data?.non_field_errors?.[0] || 'Invalid email or password.'
+      error.value = apiErrorMessage(err, 'Invalid email or password.')
       throw err
     } finally {
       loading.value = false
@@ -36,13 +74,10 @@ export const useAuthStore = defineStore('auth', () => {
     error.value = null
     try {
       const { data } = await authAPI.register(userData)
-      token.value = data.access
-      user.value = data.user
-      localStorage.setItem('gunaso_token', data.access)
-      localStorage.setItem('gunaso_user', JSON.stringify(data.user))
+      setSession(data)
       return data
     } catch (err) {
-      error.value = err.response?.data || { detail: 'Registration failed. Please try again.' }
+      error.value = apiErrorMessage(err, 'Registration failed. Please try again.')
       throw err
     } finally {
       loading.value = false
@@ -50,26 +85,30 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function fetchMe() {
-    if (!token.value) return
+    if (!user.value) return
     try {
       const { data } = await authAPI.me()
       user.value = data
-      localStorage.setItem('gunaso_user', JSON.stringify(data))
+      localStorage.setItem(USER_KEY, JSON.stringify(data))
     } catch {
-      logout()
+      // Interceptor already attempted a refresh; a failure here means the
+      // session is gone.
+      clearSession()
     }
   }
 
-  function logout() {
-    user.value = null
-    token.value = null
-    localStorage.removeItem('gunaso_token')
-    localStorage.removeItem('gunaso_user')
+  async function logout() {
+    try {
+      await authAPI.logout()
+    } catch {
+      // Even if the server call fails, drop the local session.
+    }
+    clearSession()
   }
 
   return {
-    user, token, loading, error,
+    user, loading, error,
     isAuthenticated, isCitizen, isOrgAdmin, userInitial,
-    login, register, fetchMe, logout
+    init, login, register, fetchMe, logout
   }
 })

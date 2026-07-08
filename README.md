@@ -11,13 +11,15 @@ Organizations register on the platform, define their internal departments and ro
 ## Features
 
 - **Multi-organization support** — NGOs, government bodies, private companies, ward offices, and more
-- **Smart routing** — submissions are routed to the right department or stakeholder based on category and routing rules
-- **Full status lifecycle** — `submitted → acknowledged → in-review → resolved / escalated`
-- **Real-time updates** — WebSocket-powered live notifications via Django Channels
-- **JWT authentication** — secure, stateless auth for citizens and organization staff
-- **File attachments** — attach photos, documents, or audio to submissions
-- **Async processing** — emails, notifications, and escalations handled by Celery workers
-- **Admin dashboard** — organization staff manage submissions through a clean Vue 3 interface
+- **Anonymous & guest submissions** — no account required; anonymous identity is never revealed to organizations
+- **Public tracking** — every submission gets a `GUN-YYYY-NNNNN` reference for status tracking
+- **Validated status lifecycle** — `submitted → acknowledged → in_review → resolved / rejected (→ closed)`, with `escalated`; every change recorded in an append-only audit trail
+- **JWT authentication** — short-lived access tokens in memory, rotating refresh tokens in httpOnly cookies
+- **File attachments** — validated server-side (size, type, magic bytes)
+- **Org dashboard** — organization staff manage submissions through a clean Vue 3 interface
+- **API docs** — OpenAPI schema with Swagger UI at `/api/v1/schema/swagger-ui/`
+
+See `INSTRUCTION.md` for setup and `CLAUDE.md` for the full architecture reference (including the roadmap: Channels, Celery, routing engine).
 
 ---
 
@@ -26,13 +28,12 @@ Organizations register on the platform, define their internal departments and ro
 | Layer | Technology |
 |-------|-----------|
 | Backend API | Django 5 + Django REST Framework |
-| WebSockets | Django Channels + Daphne |
 | Frontend | Vue 3 + Vite + Pinia + Vue Router |
 | Styling | Tailwind CSS |
 | Database | PostgreSQL 16 |
-| Cache / Broker | Redis 7 |
-| Task Queue | Celery + Celery Beat |
-| Auth | JWT (djangorestframework-simplejwt) |
+| Cache / Rate limiting | Redis 7 |
+| Auth | JWT (djangorestframework-simplejwt, rotating refresh + blacklist) |
+| API Docs | drf-spectacular (Swagger UI) |
 | Containerization | Docker + Docker Compose |
 | Reverse Proxy | Nginx |
 
@@ -77,13 +78,13 @@ Services will start in dependency order. First boot may take a few minutes to bu
 |---------|-----|
 | Frontend (Vue) | http://localhost |
 | API (REST) | http://localhost/api/v1/ |
+| API docs (Swagger UI) | http://localhost/api/v1/schema/swagger-ui/ |
 | Django Admin | http://localhost/admin/ |
-| API directly (dev) | http://localhost:8000/api/v1/ |
-| Frontend directly (dev) | http://localhost:5173/ |
 
-### 5. Create a superuser (first time only)
+### 5. Seed sample data & create a superuser (first time only)
 
 ```bash
+docker compose exec backend python manage.py seed_data
 docker compose exec backend python manage.py createsuperuser
 ```
 
@@ -94,31 +95,32 @@ docker compose exec backend python manage.py createsuperuser
 ### Backend only (without Docker)
 
 ```bash
-cd backend
+cd backend/gunaso-api
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-cp ../.env.example ../.env       # configure to point at local postgres/redis
+pip install -r requirements-dev.txt
+cp .env.example .env             # sqlite by default; set DATABASE_URL for Postgres
 python manage.py migrate
-python manage.py runserver
+python manage.py seed_data
+python manage.py runserver       # http://localhost:8000
 ```
 
 ### Frontend only (without Docker)
 
 ```bash
-cd frontend
+cd frontend/gunaso-ui
 npm install
-npm run dev
+npm run dev                      # http://localhost:3000 (proxies /api to :8000)
 ```
 
 ### Run tests
 
 ```bash
-# Backend
-docker compose exec backend pytest
+# Backend (bare metal)
+cd backend/gunaso-api && pytest
 
-# Frontend
-docker compose exec frontend npm run test
+# Backend (Docker)
+docker compose exec backend pytest
 ```
 
 ### Useful Compose commands
@@ -137,33 +139,29 @@ docker compose down -v            # stop and delete volumes (wipes DB)
 
 ```
 gunaso/
-├── backend/           # Django project (Python)
-│   ├── config/        # Django settings, urls, asgi, wsgi, celery
+├── backend/gunaso-api/    # Django project (Python)
+│   ├── gunaso/            # Settings, urls, pagination, error envelope
 │   ├── apps/
-│   │   ├── accounts/      # User model, JWT auth
-│   │   ├── organizations/ # Organization, Department models
-│   │   ├── submissions/   # Submission, Category, Attachment models
-│   │   ├── routing/       # RoutingRule, Stakeholder assignment
-│   │   ├── notifications/ # WebSocket consumers, email tasks
-│   │   └── analytics/     # Read-only reporting endpoints
+│   │   ├── accounts/      # User model, JWT auth (register/login/refresh/logout)
+│   │   ├── organizations/ # Organization, Stakeholder models
+│   │   └── submissions/   # Submission, Category, StatusUpdate + services
 │   ├── requirements.txt
 │   └── Dockerfile
-├── frontend/          # Vue 3 application
+├── frontend/gunaso-ui/    # Vue 3 application
 │   ├── src/
-│   │   ├── stores/    # Pinia stores
-│   │   ├── views/     # Page-level components
-│   │   ├── components/# Reusable UI components
-│   │   ├── composables/
-│   │   ├── router/
-│   │   └── api/       # Axios client modules
+│   │   ├── api/           # Axios client (in-memory token + cookie refresh)
+│   │   ├── stores/        # Pinia stores
+│   │   ├── views/         # Page-level components
+│   │   ├── components/    # Reusable UI components
+│   │   └── router/
 │   ├── package.json
 │   └── Dockerfile
 ├── nginx/
 │   └── nginx.conf
 ├── docker-compose.yml
 ├── .env.example
-├── .gitignore
-├── CLAUDE.md          # Developer north-star document
+├── INSTRUCTION.md         # Full setup & run guide
+├── CLAUDE.md              # Developer north-star document
 └── README.md
 ```
 
@@ -174,25 +172,31 @@ gunaso/
 All endpoints are versioned under `/api/v1/`.
 
 ```
-POST   /api/v1/auth/register/
-POST   /api/v1/auth/login/
-POST   /api/v1/auth/refresh/
+POST   /api/v1/auth/register/            # create account (sets refresh cookie)
+POST   /api/v1/auth/login/               # email + password
+POST   /api/v1/auth/refresh/             # rotate refresh cookie → new access token
+POST   /api/v1/auth/logout/              # blacklist refresh token
+GET    /api/v1/auth/me/
 
-GET    /api/v1/organizations/
-POST   /api/v1/organizations/
-GET    /api/v1/organizations/{id}/
+GET    /api/v1/organizations/            # verified orgs (search, filter, paginate)
+POST   /api/v1/organizations/            # register an organization
+GET    /api/v1/organizations/{slug}/
+GET    /api/v1/organizations/{slug}/submissions/   # org admin
+GET    /api/v1/organizations/{slug}/stats/         # org admin
 
-POST   /api/v1/submissions/
-GET    /api/v1/submissions/{id}/
-PATCH  /api/v1/submissions/{id}/status/
+POST   /api/v1/submissions/              # guests allowed (throttled)
+GET    /api/v1/submissions/my/           # own submissions
+GET    /api/v1/submissions/track/{ref}/  # public tracking (identity redacted)
+GET    /api/v1/submissions/{ref}/
+PATCH  /api/v1/submissions/{ref}/status/ # validated transitions, org admin
 
 GET    /api/v1/categories/
-GET    /api/v1/routing-rules/
-
-WS     /ws/submissions/{id}/   # real-time status updates
+GET    /api/v1/org/submissions/          # org-admin dashboard
+GET    /api/v1/org/stats/
+GET    /api/v1/health/
 ```
 
-Full API documentation is generated by drf-spectacular and available at `/api/v1/schema/redoc/`.
+Full API documentation is generated by drf-spectacular and available at `/api/v1/schema/swagger-ui/`.
 
 ---
 

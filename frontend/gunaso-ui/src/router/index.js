@@ -6,6 +6,7 @@ const routes = [
   { path: '/organizations', name: 'Organizations', component: () => import('@/views/OrganizationsPage.vue') },
   { path: '/organizations/:slug', name: 'OrganizationDetail', component: () => import('@/views/OrganizationDetailPage.vue') },
   { path: '/submit', name: 'Submit', component: () => import('@/views/SubmitPage.vue') },
+  { path: '/submit/:orgSlug', name: 'SubmitForOrg', component: () => import('@/views/SubmitPage.vue') },
   { path: '/track', name: 'Track', component: () => import('@/views/TrackPage.vue') },
   {
     path: '/login', name: 'Login',
@@ -23,11 +24,21 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
-    path: '/org/dashboard', name: 'OrgDashboard',
-    component: () => import('@/views/OrgDashboardPage.vue'),
-    meta: { requiresAuth: true, orgAdmin: true }
+    path: '/org/register', name: 'OrgRegister',
+    component: () => import('@/views/OrgRegisterPage.vue'),
+    meta: { requiresAuth: true }
   },
-  { path: '/org/register', name: 'OrgRegister', component: () => import('@/views/OrgRegisterPage.vue') },
+  {
+    path: '/org',
+    component: () => import('@/layouts/OrgLayout.vue'),
+    meta: { requiresAuth: true, orgAdmin: true, fullPage: true },
+    children: [
+      { path: 'dashboard', name: 'OrgDashboard', component: () => import('@/views/OrgDashboardPage.vue') },
+      { path: 'submissions', name: 'OrgSubmissions', component: () => import('@/views/OrgSubmissionsPage.vue') },
+      { path: 'staff', name: 'OrgStaff', component: () => import('@/views/OrgStaffPage.vue') },
+      { path: 'qrcode', name: 'OrgQRCode', component: () => import('@/views/OrgQRCodePage.vue') },
+    ]
+  },
   { path: '/:pathMatch(.*)*', redirect: '/' }
 ]
 

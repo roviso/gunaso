@@ -114,18 +114,7 @@ async function handleSubmit() {
     currentStep.value = 3
     uiStore.showSuccess('Complaint submitted successfully!')
   } catch {
-    // Generate mock result for prototype (API not live)
-    const year = new Date().getFullYear()
-    const num = String(Math.floor(Math.random() * 90000) + 10000)
-    submissionResult.value = {
-      reference_number: `GUN-${year}-${num}`,
-      organization: selectedOrg.value.name,
-      title: form.value.title,
-      status: 'pending',
-      created_at: new Date().toISOString()
-    }
-    currentStep.value = 3
-    uiStore.showSuccess('Complaint submitted successfully!')
+    uiStore.showError(submissionStore.error || 'Submission failed. Please try again.')
   }
 }
 
@@ -149,14 +138,31 @@ function resetForm() {
   errors.value = {}
 }
 
+// When navigated to /submit/:orgSlug the org is locked (QR code flow)
+const lockedSlug = computed(() => route.params.orgSlug || null)
+const isLocked = computed(() => !!lockedSlug.value)
+
 onMounted(async () => {
   await orgStore.fetchOrganizations()
-  const slug = route.query.org
-  if (slug) {
-    const found = orgStore.organizations.find((o) => o.slug === slug)
-    if (found) { selectedOrg.value = found; currentStep.value = 2 }
+
+  // Route param takes priority (QR code flow)
+  const slugParam = lockedSlug.value || route.query.org
+  if (slugParam) {
+    const found = orgStore.organizations.find((o) => o.slug === slugParam)
+    if (found) {
+      selectedOrg.value = found
+      currentStep.value = 2
+    } else {
+      // Try fetching directly if not in list
+      await orgStore.fetchOrgBySlug(slugParam)
+      if (orgStore.currentOrg) {
+        selectedOrg.value = orgStore.currentOrg
+        currentStep.value = 2
+      }
+    }
   }
-  // Pre-fill if logged in
+
+  // Pre-fill contact info if logged in
   if (authStore.isAuthenticated && authStore.user) {
     form.value.submitter_name = authStore.user.name || ''
     form.value.submitter_email = authStore.user.email || ''
@@ -272,16 +278,30 @@ onMounted(async () => {
 
         <!-- ===== STEP 2: FILL FORM ===== -->
         <div v-else-if="currentStep === 2" class="space-y-5">
-          <!-- Selected org banner -->
-          <div class="flex items-center gap-3 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl p-4 shadow-sm">
+          <!-- Selected org banner (locked when coming from QR code) -->
+          <div :class="['flex items-center gap-3 border rounded-2xl p-4 shadow-sm',
+            isLocked
+              ? 'bg-primary/5 dark:bg-primary/10 border-primary/20'
+              : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700']">
             <div class="w-10 h-10 bg-secondary rounded-xl flex items-center justify-center text-white font-bold shrink-0">
               {{ selectedOrg?.name[0] }}
             </div>
             <div class="flex-1">
+              <p v-if="isLocked" class="text-xs font-semibold text-primary uppercase tracking-wider mb-0.5">
+                Submitting feedback for
+              </p>
               <p class="font-semibold text-gray-900 dark:text-white text-sm">{{ selectedOrg?.name }}</p>
               <p class="text-xs text-gray-500 dark:text-gray-400">{{ selectedOrg?.category }}</p>
             </div>
-            <button @click="currentStep = 1" class="text-xs text-gray-400 hover:text-primary transition-colors font-medium">Change</button>
+            <button v-if="!isLocked" @click="currentStep = 1"
+              class="text-xs text-gray-400 hover:text-primary transition-colors font-medium shrink-0">
+              Change
+            </button>
+            <span v-else class="shrink-0">
+              <svg class="w-5 h-5 text-primary" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/>
+              </svg>
+            </span>
           </div>
 
           <div class="card p-6">
@@ -434,7 +454,7 @@ onMounted(async () => {
 
           <h2 class="text-2xl font-extrabold text-gray-900 dark:text-white mb-2">Complaint Submitted!</h2>
           <p class="text-gray-500 dark:text-gray-400 text-sm mb-8">
-            Your complaint has been submitted to <span class="font-semibold text-gray-900 dark:text-white">{{ submissionResult.organization }}</span> and is now pending review.
+            Your complaint has been submitted to <span class="font-semibold text-gray-900 dark:text-white">{{ submissionResult.organization_name || selectedOrg?.name }}</span> and is now pending review.
           </p>
 
           <!-- Reference number -->

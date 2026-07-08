@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Organization, Stakeholder
+from .models import Organization, OrganizationStaff, Stakeholder
 
 
 @admin.register(Organization)
@@ -14,3 +14,10 @@ class OrganizationAdmin(admin.ModelAdmin):
 class StakeholderAdmin(admin.ModelAdmin):
     list_display = ['user', 'organization', 'role', 'receives_all']
     list_filter = ['organization', 'receives_all']
+
+
+@admin.register(OrganizationStaff)
+class OrganizationStaffAdmin(admin.ModelAdmin):
+    list_display = ['user', 'organization', 'role', 'is_active', 'assigned_by', 'joined_at']
+    list_filter = ['organization', 'role', 'is_active']
+    search_fields = ['user__email', 'user__username', 'organization__name']
