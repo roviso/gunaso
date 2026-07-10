@@ -14,12 +14,13 @@ const uiStore = useUIStore()
 
 const submitUrl = computed(() => `${window.location.origin}/submit/${props.slug}`)
 
-// Resolve the image src from various API response shapes
+// The API returns {qr_code: 'data:image/png;base64,...', url, org_name, org_slug};
+// `url` is the QR's target link, NOT an image — never use it as the img src.
 const qrImageSrc = computed(() => {
   const qr = orgStore.qrCode
   if (!qr) return null
+  if (qr.qr_code) return qr.qr_code
   if (qr.image) return qr.image
-  if (qr.url) return qr.url
   if (qr.base64) return `data:image/png;base64,${qr.base64}`
   if (typeof qr === 'string') return qr
   return null

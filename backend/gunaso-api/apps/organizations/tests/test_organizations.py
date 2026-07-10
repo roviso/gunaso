@@ -85,3 +85,33 @@ class TestOrgScopedEndpoints:
         client.force_authenticate(citizen)
         response = client.get(f'{ORGS_URL}{organization.slug}/submissions/')
         assert response.status_code == 403
+
+
+class TestOrganizationQRCode:
+    def test_base64_payload_has_qr_code_data_uri(self, organization):
+        response = APIClient().get(
+            f'{ORGS_URL}{organization.slug}/qrcode/', {'format': 'base64'}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data['qr_code'].startswith('data:image/png;base64,')
+        assert data['url'].endswith(f'/submit/{organization.slug}')
+
+    def test_origin_param_overrides_frontend_url(self, organization):
+        response = APIClient().get(
+            f'{ORGS_URL}{organization.slug}/qrcode/',
+            {'format': 'base64', 'origin': 'https://example.ngrok-free.app'},
+        )
+        assert response.status_code == 200
+        assert response.json()['url'] == (
+            f'https://example.ngrok-free.app/submit/{organization.slug}'
+        )
+
+    def test_invalid_origin_falls_back_to_frontend_url(self, organization):
+        response = APIClient().get(
+            f'{ORGS_URL}{organization.slug}/qrcode/',
+            {'format': 'base64', 'origin': 'javascript:alert(1)'},
+        )
+        assert response.status_code == 200
+        assert response.json()['url'].startswith('http')
+        assert 'javascript' not in response.json()['url']

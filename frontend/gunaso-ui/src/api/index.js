@@ -14,10 +14,15 @@ export function getAccessToken() {
 
 const baseURL = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 
+// 'ngrok-skip-browser-warning' bypasses the free-tier ngrok interstitial page,
+// which is otherwise returned as HTML in place of API JSON responses.
+const COMMON_HEADERS = { 'ngrok-skip-browser-warning': 'true' }
+
 const api = axios.create({
   baseURL,
   timeout: 15000,
-  withCredentials: true
+  withCredentials: true,
+  headers: COMMON_HEADERS
 })
 
 api.interceptors.request.use((config) => {
@@ -31,7 +36,7 @@ let refreshPromise = null
 async function refreshSession() {
   if (!refreshPromise) {
     refreshPromise = axios
-      .post(`${baseURL}/auth/refresh/`, {}, { withCredentials: true })
+      .post(`${baseURL}/auth/refresh/`, {}, { withCredentials: true, headers: COMMON_HEADERS })
       .then(({ data }) => {
         setAccessToken(data.access)
         return data

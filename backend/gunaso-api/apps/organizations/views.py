@@ -1,5 +1,6 @@
 import base64
 import io
+from urllib.parse import urlparse
 
 from django.conf import settings as django_settings
 from django.contrib.auth import get_user_model
@@ -197,11 +198,25 @@ class OrganizationQRCodeView(APIView):
             return renderers[0], renderers[0].media_type
         return None, None
 
+    @staticmethod
+    def _resolve_frontend_url(request) -> str:
+        """The origin the visitor is browsing on (?origin=), else FRONTEND_URL.
+
+        The QR code only encodes a link back to this platform's submit page, so
+        honouring the caller-provided origin keeps QR codes scannable when the
+        app is served through a tunnel or an alternate domain.
+        """
+        origin = request.query_params.get('origin', '')
+        parsed = urlparse(origin)
+        if parsed.scheme in ('http', 'https') and parsed.netloc:
+            return f'{parsed.scheme}://{parsed.netloc}'
+        return getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3000')
+
     def get(self, request, slug):
         import qrcode
 
         org = get_object_or_404(Organization, slug=slug, is_active=True)
-        frontend_url = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3000')
+        frontend_url = self._resolve_frontend_url(request)
         target_url = f'{frontend_url}/submit/{slug}'
 
         qr = qrcode.QRCode(version=1, box_size=10, border=4)

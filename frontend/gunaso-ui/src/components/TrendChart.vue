@@ -1,13 +1,15 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import {
-  Chart,
+  Chart, LineController,
   CategoryScale, LinearScale,
   PointElement, LineElement,
   Filler, Tooltip
 } from 'chart.js'
 
-Chart.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip)
+// The controller matching the chart `type` must be registered too —
+// without LineController, `new Chart(..., {type: 'line'})` throws at mount.
+Chart.register(LineController, CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip)
 
 const props = defineProps({
   data: { type: Array, default: () => [] },

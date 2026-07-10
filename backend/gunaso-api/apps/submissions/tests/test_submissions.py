@@ -200,5 +200,9 @@ class TestOrgAdminEndpoints:
         client.force_authenticate(org_admin)
         response = client.get('/api/v1/org/stats/')
         assert response.status_code == 200
-        for key in ['total', 'pending', 'in_review', 'resolved_month', 'avg_resolution_days']:
+        for key in [
+            'total', 'pending', 'in_review', 'escalated', 'resolved_this_month',
+            'avg_resolution_days', 'by_status', 'by_type', 'by_priority',
+            'unassigned_count', 'staff_count', 'trend',
+        ]:
             assert key in response.data

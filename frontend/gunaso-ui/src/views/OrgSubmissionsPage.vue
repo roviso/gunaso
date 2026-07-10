@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useSubmissionStore } from '@/stores/submission'
 import { useOrganizationStore } from '@/stores/organization'
 import { useAuthStore } from '@/stores/auth'
@@ -11,6 +12,8 @@ import StatusBadge from '@/components/StatusBadge.vue'
 import PriorityBadge from '@/components/PriorityBadge.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 
+const route = useRoute()
+const router = useRouter()
 const submissionStore = useSubmissionStore()
 const orgStore = useOrganizationStore()
 const authStore = useAuthStore()
@@ -20,10 +23,16 @@ const filters = ref({
   status: '', type: '', priority: '', search: '',
   assignee: '', dateFrom: '', dateTo: '',
 })
+
+// Seed filters from the URL so dashboard cards can deep-link into filtered views
+// (e.g. /org/submissions?status=submitted,acknowledged or ?assignee=unassigned).
+for (const key of Object.keys(filters.value)) {
+  if (typeof route.query[key] === 'string') filters.value[key] = route.query[key]
+}
 const selectedIds = ref(new Set())
 const activeSubmission = ref(null)
 
-const STATUSES = [
+const BASE_STATUSES = [
   { value: 'submitted',    label: 'Submitted' },
   { value: 'acknowledged', label: 'Acknowledged' },
   { value: 'in_review',    label: 'In Review' },
@@ -33,14 +42,26 @@ const STATUSES = [
   { value: 'closed',       label: 'Closed' },
 ]
 
+// Dashboard links can filter on several statuses at once ("submitted,acknowledged");
+// surface such a value as its own option so the select reflects the active filter.
+const STATUSES = computed(() => {
+  const current = filters.value.status
+  if (!current || !current.includes(',')) return BASE_STATUSES
+  const label = current
+    .split(',')
+    .map((v) => BASE_STATUSES.find((s) => s.value === v)?.label || v)
+    .join(' + ')
+  return [...BASE_STATUSES, { value: current, label }]
+})
+
 const filtered = computed(() => {
   const f = filters.value
   return submissionStore.orgSubmissions.filter((s) => {
-    if (f.status && s.status !== f.status) return false
+    if (f.status && !f.status.split(',').includes(s.status)) return false
     if (f.type && s.type !== f.type) return false
     if (f.priority && s.priority !== f.priority) return false
     if (f.assignee === 'unassigned' && s.assigned_to) return false
-    if (f.assignee && f.assignee !== 'unassigned' && String(s.assigned_to_id) !== f.assignee) return false
+    if (f.assignee && f.assignee !== 'unassigned' && String(s.assigned_to?.id) !== f.assignee) return false
     if (f.search) {
       const q = f.search.toLowerCase()
       if (
@@ -96,7 +117,7 @@ function exportCSV() {
       s.priority,
       s.status,
       s.is_anonymous ? 'Anonymous' : (s.submitter_name || ''),
-      s.assigned_to_name || '',
+      s.assigned_to?.user_name || '',
       s.created_at ? new Date(s.created_at).toLocaleDateString('en-US') : '',
     ])
   ]
@@ -130,7 +151,17 @@ const someSelected = computed(
 const typeIcon = { complaint: '⚠️', feedback: '💬', suggestion: '💡' }
 
 onMounted(async () => {
-  await submissionStore.fetchOrgSubmissions()
+  await submissionStore.fetchOrgSubmissions({ page_size: 100 })
+
+  // ?ref=GUN-... deep-links straight into a submission's detail panel
+  const ref = route.query.ref
+  if (typeof ref === 'string' && ref) {
+    const match = submissionStore.orgSubmissions.find((s) => s.reference_number === ref)
+    if (match) openDetail(match)
+    else uiStore.showInfo(`Submission ${ref} was not found in the current list.`)
+    router.replace({ query: { ...route.query, ref: undefined } })
+  }
+
   const slug = orgStore.currentOrg?.slug
   if (slug) await orgStore.fetchStaff(slug)
 })
@@ -216,7 +247,7 @@ onMounted(async () => {
                 <StatusBadge :status="sub.status" />
               </td>
               <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">
-                {{ sub.assigned_to_name || '—' }}
+                {{ sub.assigned_to?.user_name || '—' }}
               </td>
               <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">
                 {{ formatDate(sub.created_at) }}

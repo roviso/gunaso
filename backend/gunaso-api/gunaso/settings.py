@@ -30,6 +30,11 @@ if not SECRET_KEY:
 
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
 
+# Dev-only convenience: accept ngrok tunnel hostnames so the stack can be
+# shared from a local machine. Never active when DEBUG=False.
+if DEBUG:
+    ALLOWED_HOSTS += ['.ngrok-free.app', '.ngrok.app', '.ngrok.io']
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Applications
 # ──────────────────────────────────────────────────────────────────────────────
@@ -199,6 +204,13 @@ CSRF_TRUSTED_ORIGINS = config(
     default='http://localhost,http://localhost:3000,http://localhost:5173',
     cast=Csv(),
 )
+
+# Dev-only convenience matching the ALLOWED_HOSTS ngrok entries above
+# (needed for the Django admin when accessed through a tunnel).
+if DEBUG:
+    CSRF_TRUSTED_ORIGINS += [
+        'https://*.ngrok-free.app', 'https://*.ngrok.app', 'https://*.ngrok.io',
+    ]
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Security headers / TLS (active when DEBUG=False)

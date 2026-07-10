@@ -10,6 +10,7 @@ export const useSubmissionStore = defineStore('submission', () => {
   const orgStats = ref(null)
   const loading = ref(false)
   const error = ref(null)
+  const statsError = ref(null)
 
   async function createSubmission(payload) {
     loading.value = true
@@ -76,10 +77,12 @@ export const useSubmissionStore = defineStore('submission', () => {
   }
 
   async function fetchOrgStats() {
+    statsError.value = null
     try {
       const { data } = await submissionsAPI.orgStats()
       orgStats.value = data
-    } catch {
+    } catch (err) {
+      statsError.value = apiErrorMessage(err, 'Could not load dashboard statistics.')
       orgStats.value = null
     }
   }
@@ -126,7 +129,7 @@ export const useSubmissionStore = defineStore('submission', () => {
   }
 
   return {
-    submissions, currentSubmission, orgSubmissions, orgStats, loading, error,
+    submissions, currentSubmission, orgSubmissions, orgStats, loading, error, statsError,
     createSubmission, fetchByReference, fetchMySubmissions,
     fetchOrgSubmissions, fetchOrgStats, updateStatus, addNote, assignSubmission,
   }

@@ -9,5 +9,6 @@ django-redis==5.4.0
 psycopg[binary]==3.2.9
 python-decouple==3.8
 Pillow==11.3.0
+qrcode==8.2
 whitenoise==6.9.0
 gunicorn==23.0.0
