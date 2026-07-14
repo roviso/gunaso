@@ -18,7 +18,10 @@ async function handleLogout() {
 
 onMounted(async () => {
   if (!orgStore.currentOrg) {
-    await orgStore.fetchMyOrg()
+    const org = await orgStore.fetchMyOrg()
+    if (!org) {
+      router.replace({ name: 'OrgRegister' })
+    }
   }
 })
 </script>
