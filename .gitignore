@@ -34,9 +34,13 @@ db.sqlite3
 db.sqlite3-journal
 media/
 staticfiles/
-/backend/media/
-/backend/staticfiles/
-/backend/static/
+/backend/gunaso-api/media/
+/backend/gunaso-api/staticfiles/
+
+# collectstatic output (STATIC_ROOT)
+/backend/gunaso-api/static/
+# Vue build copied in from frontend/gunaso-ui/dist for backend-served SPA
+/backend/gunaso-api/frontend/
 
 # Virtual environments
 .venv/
@@ -82,9 +86,9 @@ lerna-debug.log*
 .eslintcache
 .stylelintcache
 
-/frontend/dist/
-/frontend/dist-ssr/
-/frontend/.vite/
+/frontend/gunaso-ui/dist/
+/frontend/gunaso-ui/dist-ssr/
+/frontend/gunaso-ui/.vite/
 
 # ──────────────────────────────────────────────
 #  Environment / Secrets  (NEVER commit these)

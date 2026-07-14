@@ -75,7 +75,7 @@ ROOT_URLCONF = 'gunaso.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / "frontend", BASE_DIR / "templates"],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -243,7 +243,13 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = '/static/'
-STATIC_ROOT = BASE_DIR / 'staticfiles'
+# The Vue build is copied into frontend/ with its assets/ subdirectory intact.
+# It is built with base='/static/', so index.html requests /static/assets/*.
+STATICFILES_DIRS = [
+    BASE_DIR / "frontend",
+]
+STATIC_ROOT = BASE_DIR / "static"
+
 STORAGES = {
     'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
     'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage'},
