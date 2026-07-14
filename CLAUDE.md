@@ -215,6 +215,22 @@ All endpoints are under `/api/v1/`. OpenAPI docs: `/api/v1/schema/swagger-ui/`.
 - Requests must stay **same-origin** for the cookie to work: keep `VITE_API_BASE_URL=/api/v1`
   and go through the Vite dev proxy (dev) or Nginx (Docker/production).
 
+### Onboarding
+
+- After first authentication on a device, users land on `/welcome` (`OnboardingPage.vue`) —
+  a 3-step, role-aware flow (welcome → how it works → first action).
+- Completion is a per-device UX flag in localStorage keyed by user id
+  (`stores/onboarding.js`); it is not account data and has no backend field.
+- Login/Register push `onboardingStore.postAuthRoute(user)` after auth; an explicit
+  `?redirect=` query on login takes precedence.
+
+### Design system
+
+- Typography: `font-display` = Bricolage Grotesque (headings, loaded in `index.html`),
+  `font-sans` = Public Sans (body). Headings get `font-display` via base CSS.
+- Motion utilities (`animate-fade-up`, `.stagger`, `.skeleton`, `ease-spring`) live in
+  `tailwind.config.js` + `src/assets/main.css`; `prefers-reduced-motion` is respected globally.
+
 ### Rules
 
 1. `<script setup>` only — never the Options API.

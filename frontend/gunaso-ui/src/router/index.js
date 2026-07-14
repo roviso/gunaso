@@ -19,6 +19,11 @@ const routes = [
     meta: { guest: true }
   },
   {
+    path: '/welcome', name: 'Welcome',
+    component: () => import('@/views/OnboardingPage.vue'),
+    meta: { requiresAuth: true, fullPage: true }
+  },
+  {
     path: '/dashboard', name: 'Dashboard',
     component: () => import('@/views/CitizenDashboardPage.vue'),
     meta: { requiresAuth: true }

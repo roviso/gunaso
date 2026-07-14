@@ -5,14 +5,32 @@
 @layer base {
   html { @apply scroll-smooth; }
   body { @apply antialiased bg-app-bg dark:bg-gray-900 text-gray-900 dark:text-white; }
+
+  h1, h2, h3, h4 { @apply font-display; }
+
+  /* Visible, on-brand keyboard focus everywhere */
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary/60 ring-offset-2 ring-offset-white dark:ring-offset-gray-900 rounded-md;
+  }
+
+  ::selection { @apply bg-primary/20 text-primary-900 dark:text-primary-100; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 }
 
 @layer components {
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 bg-primary hover:bg-primary-600 active:bg-primary-700 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 bg-primary hover:bg-primary-600 active:bg-primary-700 active:scale-[0.98] text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100;
   }
   .btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 text-secondary dark:text-white border border-gray-200 dark:border-gray-600 font-semibold px-6 py-3 rounded-xl transition-all duration-200 shadow-sm;
+    @apply inline-flex items-center justify-center gap-2 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 active:scale-[0.98] text-secondary dark:text-white border border-gray-200 dark:border-gray-600 font-semibold px-6 py-3 rounded-xl transition-all duration-200 shadow-sm;
   }
   .btn-ghost {
     @apply inline-flex items-center justify-center gap-2 text-gray-600 dark:text-gray-300 hover:text-secondary dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800 font-medium px-4 py-2.5 rounded-xl transition-all duration-200;
@@ -23,11 +41,14 @@
   .card {
     @apply bg-white dark:bg-gray-800 rounded-2xl shadow-card border border-gray-100 dark:border-gray-700;
   }
+  .card-interactive {
+    @apply card cursor-pointer transition-all duration-200 ease-spring hover:shadow-card-hover hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.995];
+  }
   .page-container {
     @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
   }
   .section-title {
-    @apply text-2xl font-bold text-secondary dark:text-white;
+    @apply font-display text-2xl font-bold text-secondary dark:text-white;
   }
   .label {
     @apply block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5;
@@ -35,4 +56,23 @@
   .field-error {
     @apply text-xs text-red-500 mt-1;
   }
+
+  /* Skeleton loading block with shimmer sweep */
+  .skeleton {
+    @apply relative overflow-hidden rounded-xl bg-gray-200/70 dark:bg-gray-700/60;
+  }
+  .skeleton::after {
+    content: '';
+    @apply absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/60 dark:via-white/10 to-transparent;
+    animation: shimmer 1.6s infinite;
+  }
+
+  /* Reusable stagger helper: apply .stagger to a parent whose children animate */
+  .stagger > * { animation: fade-up 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .stagger > *:nth-child(1) { animation-delay: 0.05s; }
+  .stagger > *:nth-child(2) { animation-delay: 0.13s; }
+  .stagger > *:nth-child(3) { animation-delay: 0.21s; }
+  .stagger > *:nth-child(4) { animation-delay: 0.29s; }
+  .stagger > *:nth-child(5) { animation-delay: 0.37s; }
+  .stagger > *:nth-child(6) { animation-delay: 0.45s; }
 }
