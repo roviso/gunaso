@@ -14,6 +14,7 @@ const totalSteps = 3
 
 const firstName = computed(() => (authStore.user?.name || 'friend').split(' ')[0])
 const isOrgAdmin = computed(() => authStore.isOrgAdmin)
+const showsOrgWorkspace = computed(() => authStore.hasOrgAccess)
 
 const lifecycle = [
   { label: 'Submitted', color: 'bg-amber-400' },
@@ -82,7 +83,20 @@ const orgActions = [
   },
 ]
 
-const actions = computed(() => (isOrgAdmin.value ? orgActions : citizenActions))
+const staffActions = [
+  {
+    key: 'org-dashboard', primary: true, to: '/org/dashboard',
+    title: 'Go to my org dashboard',
+    description: 'View incoming submissions and take action where your role allows.',
+    icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z'
+  },
+]
+
+const actions = computed(() => {
+  if (isOrgAdmin.value) return orgActions
+  if (showsOrgWorkspace.value) return staffActions
+  return citizenActions
+})
 
 function next() {
   if (step.value < totalSteps - 1) {
@@ -104,7 +118,7 @@ function finish(to) {
 }
 
 function skip() {
-  finish(isOrgAdmin.value ? '/org/dashboard' : '/dashboard')
+  finish(showsOrgWorkspace.value ? '/org/dashboard' : '/dashboard')
 }
 
 function onKeydown(e) {
@@ -112,7 +126,10 @@ function onKeydown(e) {
   else if (e.key === 'ArrowLeft') back()
 }
 
-onMounted(() => window.addEventListener('keydown', onKeydown))
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
+  if (!isOrgAdmin.value) authStore.fetchStaffAccess()
+})
 onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
@@ -227,13 +244,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
           <!-- STEP 3 · First action -->
           <section v-else key="action" class="text-center">
             <h1 class="font-display text-3xl sm:text-4xl font-bold tracking-tight mb-3 animate-fade-up">
-              {{ isOrgAdmin ? 'Set up your workspace' : 'What would you like to do first?' }}
+              {{ isOrgAdmin ? 'Set up your workspace' : showsOrgWorkspace ? 'You\'re all set' : 'What would you like to do first?' }}
             </h1>
             <p class="text-blue-200/80 mb-10 animate-fade-up" style="animation-delay: 0.08s">
-              {{ isOrgAdmin ? 'Get your organization ready to receive and resolve submissions.' : 'Pick one — you can do everything else later.' }}
+              {{ isOrgAdmin ? 'Get your organization ready to receive and resolve submissions.' : showsOrgWorkspace ? 'Head to your org dashboard to get started.' : 'Pick one — you can do everything else later.' }}
             </p>
 
-            <div :class="['grid gap-4 text-left stagger', isOrgAdmin ? 'sm:grid-cols-2 max-w-2xl mx-auto' : 'sm:grid-cols-2']">
+            <div :class="['grid gap-4 text-left stagger', (isOrgAdmin || showsOrgWorkspace) ? 'sm:grid-cols-2 max-w-2xl mx-auto' : 'sm:grid-cols-2']">
               <button v-for="action in actions" :key="action.key" @click="finish(action.to)"
                 :class="['group rounded-2xl p-5 border text-left transition-all duration-200 ease-spring hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99]',
                   action.primary

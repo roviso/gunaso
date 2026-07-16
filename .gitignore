@@ -27,6 +27,7 @@ MANIFEST
 pip-log.txt
 pip-delete-this-directory.txt
 
+.tmp/
 # Django runtime
 *.log
 local_settings.py

@@ -24,8 +24,12 @@ class UserSerializer(serializers.ModelSerializer):
             'id', 'username', 'email', 'first_name', 'last_name', 'name',
             'user_type', 'phone', 'avatar', 'date_joined',
             'organization_name', 'organization_slug',
+            'email_verified', 'must_change_password',
         ]
-        read_only_fields = ['id', 'username', 'email', 'user_type', 'date_joined']
+        read_only_fields = [
+            'id', 'username', 'email', 'user_type', 'date_joined',
+            'email_verified', 'must_change_password',
+        ]
 
     def get_name(self, obj) -> str:
         return obj.get_full_name() or obj.username
@@ -40,6 +44,41 @@ class UserSerializer(serializers.ModelSerializer):
     def get_organization_slug(self, obj) -> str | None:
         org = self._first_org(obj)
         return org.slug if org else None
+
+    # Design note (staff-roles-privileges subtask 05): `organization_name`/
+    # `organization_slug` above answer one specific question — "does this
+    # user *manage* an org as `org_admin`?" — and are left untouched here so
+    # the existing org-admin frontend flow doesn't regress. A user's separate
+    # *staff* relationship (an OrganizationStaff row with status='active',
+    # possibly at a different organization, carrying its own role/privileges)
+    # is deliberately NOT added to this serializer — conflating the two into
+    # one payload would make it ambiguous which relationship a given field
+    # describes for a user who is both an org_admin and staff elsewhere.
+    # Instead it is exposed via a dedicated endpoint,
+    # GET /api/v1/organizations/my-access/ (apps/organizations/views.py::MyStaffAccessView),
+    # scoped to `request.user`'s own active membership only. See subtask 06
+    # for the frontend consumption of that endpoint.
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    """Used both for the voluntary 'change my password' action and the forced
+    first-login change on an admin-assigned account (User.must_change_password).
+    Requires the current password even in the forced case — the user just
+    typed it during login, but re-confirming it here still blocks a stolen
+    access token (without the password) from silently rotating credentials."""
+
+    current_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(write_only=True)
+
+    def validate_current_password(self, value):
+        user = self.context['user']
+        if not user.check_password(value):
+            raise serializers.ValidationError('Current password is incorrect.')
+        return value
+
+    def validate_new_password(self, value):
+        validate_password(value, user=self.context['user'])
+        return value
 
 
 class UserRegistrationSerializer(serializers.Serializer):
@@ -87,3 +126,18 @@ class UserRegistrationSerializer(serializers.Serializer):
         user.set_password(validated_data['password'])
         user.save()
         return user
+
+
+class EmailVerificationRequestSerializer(serializers.Serializer):
+    """Optionally corrects the account's email before sending a verification
+    link to it — lets a staff member fix an admin-typo'd address in the same
+    step as verifying it, without a separate 'edit profile' round trip."""
+
+    email = serializers.EmailField(required=False)
+
+    def validate_email(self, value):
+        value = value.lower().strip()
+        user = self.context['user']
+        if User.objects.filter(email__iexact=value).exclude(pk=user.pk).exists():
+            raise serializers.ValidationError('An account with this email already exists.')
+        return value

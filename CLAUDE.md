@@ -311,7 +311,8 @@ Root `.env` (Docker stack — see `.env.example`): `DEBUG`, `SECRET_KEY`, `JWT_S
 `SECURE_SSL_REDIRECT`, `MAX_ATTACHMENT_SIZE_MB`, optional `EMAIL_*`.
 
 Backend-only extras: `DATABASE_URL`, `REDIS_URL`, `JWT_*_LIFETIME_*`, `THROTTLE_*`,
-`LOG_LEVEL`, `DB_CONN_MAX_AGE`.
+`LOG_LEVEL`, `DB_CONN_MAX_AGE`, `STAFF_INVITE_EXPIRY_DAYS` (default 7 — how long a staff
+invite link stays valid; see `apps/organizations/services.py`).
 
 Frontend: `VITE_API_BASE_URL` (keep it `/api/v1`).
 

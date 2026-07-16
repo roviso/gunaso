@@ -6,7 +6,7 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from apps.organizations.models import Organization
-from apps.organizations.permissions import IsOrgAdminOfOrg
+from apps.organizations.permissions import HasOrgPrivilege, IsOrgAdminOfOrg
 
 from .models import Category, InvalidStatusTransitionError, StatusUpdate, Submission
 from .serializers import (
@@ -21,6 +21,28 @@ SUBMISSION_QS = (
     Submission.objects.select_related('organization', 'category', 'citizen')
     .prefetch_related('updates__updated_by')
 )
+
+
+def _resolve_org_for_request(request):
+    """The org the current user acts within on the /org/* convenience
+    endpoints: the org they administer, or (falling back) the org they hold
+    an active staff membership in. None if neither applies.
+
+    Without the staff fallback, OrgAdminSubmissionsView/OrgAdminStatsView
+    would silently return nothing for every staff member — they were
+    filtered on `organization__admin=request.user`, which is only ever true
+    for the org_admin themselves.
+    """
+    org = Organization.objects.filter(admin=request.user).first()
+    if org is not None:
+        return org
+    from apps.organizations.models import OrganizationStaff
+    staff = (
+        OrganizationStaff.objects.filter(user=request.user, status='active', is_active=True)
+        .select_related('organization')
+        .first()
+    )
+    return staff.organization if staff else None
 
 
 class CategoryListView(generics.ListAPIView):
@@ -105,7 +127,7 @@ class SubmissionStatusUpdateView(APIView):
 
     def patch(self, request, reference_number):
         submission = get_object_or_404(SUBMISSION_QS, reference_number=reference_number)
-        IsOrgAdminOfOrg().check(request, submission.organization)
+        HasOrgPrivilege('manage_submissions').check(request, submission.organization)
 
         new_status = request.data.get('status')
         if not new_status:
@@ -128,6 +150,28 @@ class SubmissionStatusUpdateView(APIView):
 
         # Re-fetch so the serialized timeline includes the update we just appended.
         submission = SUBMISSION_QS.get(pk=submission.pk)
+        return Response(SubmissionSerializer(submission, context={'request': request}).data)
+
+
+class SubmissionVisibilityView(APIView):
+    """PATCH /submissions/{reference}/visibility/ — toggle whether this
+    submission appears on the organization's public showcase profile.
+    Requires org admin or the 'manage_submissions' privilege (the same gate
+    as status updates — showcasing is treated as part of normal case
+    handling, not a separate concern)."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, reference_number):
+        submission = get_object_or_404(SUBMISSION_QS, reference_number=reference_number)
+        HasOrgPrivilege('manage_submissions').check(request, submission.organization)
+
+        is_public = request.data.get('is_public')
+        if not isinstance(is_public, bool):
+            raise ValidationError({'is_public': 'This field is required and must be a boolean.'})
+
+        submission.is_public = is_public
+        submission.save(update_fields=['is_public', 'updated_at'])
         return Response(SubmissionSerializer(submission, context={'request': request}).data)
 
 
@@ -164,7 +208,14 @@ class SubmissionUpdatesView(generics.ListCreateAPIView):
 
 
 class OrgAdminSubmissionsView(generics.ListAPIView):
-    """GET /org/submissions/ — all submissions across orgs managed by the current user."""
+    """GET /org/submissions/ — submissions for the org the current user
+    administers or holds an active staff membership in (whichever applies —
+    see _resolve_org_for_request). Requires the 'view_submissions' privilege
+    for staff; org admins always pass.
+
+    ?assigned_to=me scopes to the requesting staff member's own queue — the
+    "assigned to me" widget on the staff dashboard.
+    """
 
     serializer_class = SubmissionSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -172,23 +223,32 @@ class OrgAdminSubmissionsView(generics.ListAPIView):
     search_fields = ['title', 'reference_number']
 
     def get_queryset(self):
-        return SUBMISSION_QS.filter(organization__admin=self.request.user)
+        org = _resolve_org_for_request(self.request)
+        if org is None:
+            return SUBMISSION_QS.none()
+        HasOrgPrivilege('view_submissions').check(self.request, org)
+        qs = SUBMISSION_QS.filter(organization=org)
+        if self.request.query_params.get('assigned_to') == 'me':
+            qs = qs.filter(assigned_to__user=self.request.user, assigned_to__organization=org)
+        return qs
 
 
 class OrgAdminStatsView(APIView):
-    """GET /org/stats/ — dashboard stats for the org managed by the current user."""
+    """GET /org/stats/ — dashboard stats for the org the current user
+    administers or holds an active staff membership in."""
 
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        org = Organization.objects.filter(admin=request.user).first()
+        org = _resolve_org_for_request(request)
         if org is None:
             raise NotFound('You do not manage any organization.')
+        HasOrgPrivilege('view_stats').check(request, org)
         return Response(organization_stats(org))
 
 
 class SubmissionAssignView(APIView):
-    """PATCH /submissions/{reference}/assign/ — assign to a staff member (org admin or supervisor)."""
+    """PATCH /submissions/{reference}/assign/ — assign to a staff member (org admin or 'assign_submissions')."""
 
     permission_classes = [permissions.IsAuthenticated]
 
@@ -196,19 +256,9 @@ class SubmissionAssignView(APIView):
         from apps.organizations.models import OrganizationStaff
 
         submission = get_object_or_404(SUBMISSION_QS, reference_number=reference_number)
-        user = request.user
         org = submission.organization
 
-        is_org_admin = org.admin_id == user.id or user.is_staff
-        is_supervisor = (
-            not is_org_admin
-            and OrganizationStaff.objects.filter(
-                organization=org, user=user, role='supervisor', is_active=True
-            ).exists()
-        )
-
-        if not (is_org_admin or is_supervisor):
-            raise PermissionDenied('Only org admins or supervisors can assign submissions.')
+        HasOrgPrivilege('assign_submissions').check(request, org)
 
         staff_id = request.data.get('staff_id')
         if staff_id is None:

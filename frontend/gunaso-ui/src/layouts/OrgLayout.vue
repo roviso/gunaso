@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useOrganizationStore } from '@/stores/organization'
 import OrgSidebar from '@/components/OrgSidebar.vue'
 import ToastNotification from '@/components/ToastNotification.vue'
+import EmailVerificationBanner from '@/components/EmailVerificationBanner.vue'
 
 const authStore = useAuthStore()
 const orgStore = useOrganizationStore()
@@ -17,11 +18,20 @@ async function handleLogout() {
 }
 
 onMounted(async () => {
-  if (!orgStore.currentOrg) {
+  if (orgStore.currentOrg) return
+
+  if (authStore.isOrgAdmin) {
     const org = await orgStore.fetchMyOrg()
-    if (!org) {
-      router.replace({ name: 'OrgRegister' })
-    }
+    if (!org) router.replace({ name: 'OrgRegister' })
+    return
+  }
+
+  // Staff never manage an org (/organizations/mine/ 404s for them — it's
+  // scoped to `organization.admin`), so resolve their org via the active
+  // staff membership the router guard already fetched instead. Redirecting
+  // to OrgRegister here would be wrong — staff don't register orgs.
+  if (authStore.accessibleOrgSlug) {
+    await orgStore.fetchOrgBySlug(authStore.accessibleOrgSlug)
   }
 })
 </script>
@@ -41,11 +51,25 @@ onMounted(async () => {
           </svg>
         </button>
 
-        <span class="text-sm text-gray-600 dark:text-gray-300 font-semibold hidden sm:block">
+        <span class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300 font-semibold hidden sm:flex">
           {{ orgStore.currentOrg?.name || authStore.user?.organization_name || 'Organization Portal' }}
+          <span v-if="orgStore.currentOrg && !orgStore.currentOrg.is_verified"
+            class="px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+            title="A platform admin needs to verify this organization before it appears in public search.">
+            Pending verification
+          </span>
         </span>
 
         <div class="flex items-center gap-1">
+          <RouterLink v-if="orgStore.currentOrg"
+            :to="`/organizations/${orgStore.currentOrg.slug}`"
+            class="p-2 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            title="Preview public profile">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+            </svg>
+          </RouterLink>
           <RouterLink
             to="/"
             class="p-2 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
@@ -66,6 +90,8 @@ onMounted(async () => {
           </button>
         </div>
       </header>
+
+      <EmailVerificationBanner />
 
       <!-- Main content -->
       <main class="flex-1 overflow-y-auto">

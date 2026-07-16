@@ -3,20 +3,37 @@ import io
 from urllib.parse import urlparse
 
 from django.conf import settings as django_settings
-from django.contrib.auth import get_user_model
-from django.db.models import Avg, Count, F, Q
+from django.db.models import Avg, Count, F, ProtectedError, Q
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, status
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from .models import Organization, OrganizationStaff
-from .permissions import IsOrgAdminOfOrg
-from .serializers import OrganizationSerializer, OrganizationStaffSerializer
+from apps.accounts.views import _auth_payload, _set_refresh_cookie
 
-User = get_user_model()
+from .models import Organization, OrganizationStaff, StaffRole
+from .permissions import HasOrgPrivilege, IsOrgAdminOfOrg
+from .privileges import STAFF_PRIVILEGES
+from .serializers import (
+    OrganizationSerializer,
+    OrganizationStaffSerializer,
+    StaffInviteAcceptSerializer,
+    StaffRoleSerializer,
+)
+from .services import (
+    InviteError,
+    InviteExpiredError,
+    InviteInvalidError,
+    accept_invite,
+    create_or_invite_staff,
+    create_staff_with_credentials,
+    invite_link,
+    resend_staff_invite,
+    resolve_invite,
+)
 
 
 def org_queryset_with_counts():
@@ -68,6 +85,36 @@ class OrganizationDetailView(generics.RetrieveAPIView):
         return org_queryset_with_counts().filter(is_active=True)
 
 
+class OrganizationShowcaseView(generics.ListAPIView):
+    """GET /organizations/{slug}/showcase/ — public list of submissions this
+    organization's staff have chosen to showcase (Submission.is_public=True).
+
+    AllowAny, like OrganizationDetailView — an org's public profile (and its
+    showcase) is reachable by slug regardless of verification status, same as
+    today; verification only gates whether the org appears in *search/browse*
+    results (OrganizationListCreateView), not direct access.
+
+    Reuses TrackSubmissionSerializer: it already never exposes submitter
+    contact details and shows 'Anonymous' in place of a name for anonymous
+    submissions — exactly the redaction a public showcase needs.
+    """
+
+    permission_classes = [permissions.AllowAny]
+
+    def get_serializer_class(self):
+        from apps.submissions.serializers import TrackSubmissionSerializer
+        return TrackSubmissionSerializer
+
+    def get_queryset(self):
+        from apps.submissions.models import Submission
+        org = get_object_or_404(Organization, slug=self.kwargs['slug'], is_active=True)
+        return (
+            Submission.objects.filter(organization=org, is_public=True)
+            .select_related('organization', 'category', 'citizen')
+            .prefetch_related('updates__updated_by')
+        )
+
+
 class MyOrganizationView(APIView):
     """GET /organizations/mine/ — the organization managed by the current user."""
 
@@ -81,7 +128,7 @@ class MyOrganizationView(APIView):
 
 
 class OrganizationSubmissionsView(generics.ListAPIView):
-    """GET /organizations/{slug}/submissions/ — org admin only."""
+    """GET /organizations/{slug}/submissions/ — org admin or 'view_submissions' privilege."""
 
     permission_classes = [permissions.IsAuthenticated]
     filterset_fields = ['status', 'priority', 'submission_type']
@@ -93,24 +140,163 @@ class OrganizationSubmissionsView(generics.ListAPIView):
     def get_queryset(self):
         from apps.submissions.models import Submission
         org = get_object_or_404(Organization, slug=self.kwargs['slug'])
-        IsOrgAdminOfOrg().check(self.request, org)
-        return (
+        HasOrgPrivilege('view_submissions').check(self.request, org)
+        qs = (
             Submission.objects.filter(organization=org)
             .select_related('organization', 'category', 'citizen')
             .prefetch_related('updates__updated_by')
         )
+        # ?assigned_to=me — the current user's own queue on the staff
+        # dashboard. Any other value is left to the standard status/priority/
+        # submission_type filterset (no generic numeric-id lookup is exposed
+        # here to avoid leaking other staff members' assignment counts).
+        if self.request.query_params.get('assigned_to') == 'me':
+            qs = qs.filter(assigned_to__user=self.request.user, assigned_to__organization=org)
+        return qs
 
 
 class OrganizationStatsView(APIView):
-    """GET /organizations/{slug}/stats/ — aggregate counts, org admin only."""
+    """GET /organizations/{slug}/stats/ — org admin or 'view_stats' privilege."""
 
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, slug):
         from apps.submissions.services import organization_stats
         org = get_object_or_404(Organization, slug=slug)
-        IsOrgAdminOfOrg().check(request, org)
+        HasOrgPrivilege('view_stats').check(request, org)
         return Response(organization_stats(org))
+
+
+class OrganizationPrivilegesView(APIView):
+    """GET /organizations/privileges/ — static catalog of assignable staff privileges.
+
+    This carries no org-specific data (see apps/organizations/privileges.py) so
+    it is safe to expose to anyone authenticated — least-restrictive option
+    that still avoids handing the catalog to fully anonymous callers.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        return Response(STAFF_PRIVILEGES)
+
+
+class OrganizationRolesView(generics.ListCreateAPIView):
+    """GET /organizations/{slug}/roles/ — list custom roles; POST — create one.
+
+    Requires org admin or the 'manage_roles' privilege.
+    """
+
+    serializer_class = StaffRoleSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None
+
+    def _get_org(self):
+        if not hasattr(self, '_org'):
+            org = get_object_or_404(Organization, slug=self.kwargs['slug'])
+            HasOrgPrivilege('manage_roles').check(self.request, org)
+            self._org = org
+        return self._org
+
+    def get_queryset(self):
+        return (
+            StaffRole.objects.filter(organization=self._get_org())
+            .annotate(staff_count_annotated=Count('staff_members', distinct=True))
+        )
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['organization'] = self._get_org()
+        return context
+
+
+class OrganizationRoleDetailView(APIView):
+    """PATCH/DELETE /organizations/{slug}/roles/{role_id}/ — update or delete a custom role.
+
+    Requires org admin or the 'manage_roles' privilege.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _get_objects(self, request, slug, role_id):
+        org = get_object_or_404(Organization, slug=slug)
+        HasOrgPrivilege('manage_roles').check(request, org)
+        role = get_object_or_404(
+            StaffRole.objects.annotate(staff_count_annotated=Count('staff_members', distinct=True)),
+            pk=role_id, organization=org,
+        )
+        return org, role
+
+    def patch(self, request, slug, role_id):
+        org, role = self._get_objects(request, slug, role_id)
+        serializer = StaffRoleSerializer(
+            role, data=request.data, partial=True, context={'organization': org},
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def delete(self, request, slug, role_id):
+        _, role = self._get_objects(request, slug, role_id)
+        if role.staff_members.exists():
+            return Response(
+                {'detail': 'Cannot delete a role that still has staff members assigned to it.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+        try:
+            role.delete()
+        except ProtectedError:
+            return Response(
+                {'detail': 'Cannot delete a role that still has staff members assigned to it.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class MyStaffAccessView(APIView):
+    """GET /organizations/my-access/ — the current user's active org-staff role & privileges.
+
+    Design decision (staff-roles-privileges subtask 05): this is a **dedicated
+    endpoint** rather than an addition to `UserSerializer`/`GET /auth/me/`.
+    `UserSerializer.organization_name`/`organization_slug` already answer "does
+    this user manage an org as `org_admin`?" — that flow is left untouched.
+    This endpoint answers the separate question "is this user an *active*
+    OrganizationStaff member somewhere, and what can they do?", which matters
+    because staff members never get `user_type` promoted to `org_admin` (see
+    CLAUDE.md section 4) — without this endpoint the frontend has no way to
+    grant them staff-scoped access. Keeping the two responses separate means a
+    user who happens to be both an org_admin of one org and a staff member of
+    another never has those two relationships conflated into one payload.
+
+    Only the requesting user's own membership is ever resolved (`user=request.user`);
+    invited-but-unaccepted and disabled staff rows are deliberately excluded so
+    they read as "no access" rather than an error. Always returns 200 — a user
+    with no qualifying membership gets null/empty fields, not a 404.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        staff = (
+            OrganizationStaff.objects.filter(
+                user=request.user, status='active', is_active=True,
+            )
+            .select_related('organization', 'role')
+            .first()
+        )
+        if staff is None:
+            return Response({
+                'organization_name': None,
+                'organization_slug': None,
+                'role_name': None,
+                'privileges': [],
+            })
+        return Response({
+            'organization_name': staff.organization.name,
+            'organization_slug': staff.organization.slug,
+            'role_name': staff.role.name if staff.role else None,
+            'privileges': (staff.role.privileges or []) if staff.role else [],
+        })
 
 
 class OrganizationStaffView(generics.ListAPIView):
@@ -131,33 +317,145 @@ class OrganizationStaffView(generics.ListAPIView):
             .select_related('user', 'assigned_by')
         )
 
-    def post(self, request, slug):
-        org = self._get_org()
-        user_email = (request.data.get('user_email') or '').strip().lower()
-        role = request.data.get('role', 'agent')
+    def _resolve_role(self, org, role_id):
+        if role_id in (None, ''):
+            raise ValidationError({'role': 'This field is required.'})
+        try:
+            return StaffRole.objects.get(pk=role_id, organization=org)
+        except (StaffRole.DoesNotExist, ValueError, TypeError):
+            raise ValidationError({'role': 'Invalid role for this organization.'})
 
+    def post(self, request, slug):
+        """Add a staff member — two mutually exclusive modes, chosen by `mode`:
+
+        - `mode: 'invite'` (default) — by email. An existing, already-usable-
+          password user is attached immediately (status='active'); otherwise a
+          pending user is created and a single-use, expiring invite link is
+          emailed. See services.create_or_invite_staff.
+        - `mode: 'credentials'` — admin sets `username`/`password`/`email`
+          directly; the account is active immediately with
+          must_change_password=True and email_verified=False. See
+          services.create_staff_with_credentials.
+        """
+        org = self._get_org()
+        mode = request.data.get('mode', 'invite')
+
+        if mode == 'credentials':
+            role = self._resolve_role(org, request.data.get('role'))
+            staff = create_staff_with_credentials(
+                org=org,
+                username=request.data.get('username', ''),
+                password=request.data.get('password', ''),
+                email=request.data.get('email', ''),
+                role=role,
+                assigned_by=request.user,
+            )
+            data = OrganizationStaffSerializer(staff).data
+            data['invited'] = False
+            data['invite_link'] = None
+            return Response(data, status=status.HTTP_201_CREATED)
+
+        user_email = (request.data.get('user_email') or '').strip().lower()
         if not user_email:
             raise ValidationError({'user_email': 'This field is required.'})
+        role = self._resolve_role(org, request.data.get('role'))
 
-        valid_roles = {r for r, _ in OrganizationStaff.ROLE_CHOICES}
-        if role not in valid_roles:
-            raise ValidationError({'role': f'Must be one of: {sorted(valid_roles)}'})
-
-        try:
-            user = User.objects.get(email__iexact=user_email)
-        except User.DoesNotExist:
-            raise ValidationError({'user_email': f'No registered user found with email "{user_email}".'})
-
-        if OrganizationStaff.objects.filter(organization=org, user=user).exists():
-            raise ValidationError({'user_email': 'This user is already a staff member of this organization.'})
-
-        staff = OrganizationStaff.objects.create(
-            organization=org,
-            user=user,
-            role=role,
-            assigned_by=request.user,
+        staff, invited, raw_token = create_or_invite_staff(
+            org=org, email=user_email, role=role, assigned_by=request.user,
         )
-        return Response(OrganizationStaffSerializer(staff).data, status=status.HTTP_201_CREATED)
+        data = OrganizationStaffSerializer(staff).data
+        data['invited'] = invited
+        # Copy-link fallback for when email delivery isn't configured/reachable —
+        # safe to return since only the inviting admin sees this response.
+        data['invite_link'] = invite_link(raw_token) if raw_token else None
+        return Response(data, status=status.HTTP_201_CREATED)
+
+
+class OrganizationStaffResendInviteView(APIView):
+    """POST /organizations/{slug}/staff/{staff_id}/resend-invite/
+
+    Invalidates any prior unaccepted token for this staff row and issues +
+    emails a new one. Requires org admin or the 'manage_staff' privilege.
+    Returns 400 if the staff member's status is already 'active'
+    (see services.resend_staff_invite).
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, slug, staff_id):
+        org = get_object_or_404(Organization, slug=slug)
+        HasOrgPrivilege('manage_staff').check(request, org)
+        staff = get_object_or_404(OrganizationStaff, pk=staff_id, organization=org)
+        staff, raw_token = resend_staff_invite(staff, request.user)
+        data = OrganizationStaffSerializer(staff).data
+        data['invite_link'] = invite_link(raw_token)
+        return Response(data)
+
+
+class StaffInvitePreviewView(APIView):
+    """GET /organizations/invite/<token>/ — public preview of a pending invite.
+
+    Returns just enough to render a "You're invited to join <org> as <role>"
+    screen before the user sets a password. An invalid, expired, or
+    already-accepted token returns a bare 404 (never a distinguishing error)
+    so nothing about other invites is enumerable.
+    """
+
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
+
+    def get(self, request, token):
+        try:
+            invite = resolve_invite(token)
+        except InviteError:
+            raise NotFound()
+
+        staff = invite.staff
+        return Response({
+            'organization': staff.organization.name,
+            'organization_slug': staff.organization.slug,
+            'role': staff.role.name if staff.role else None,
+            'email': staff.user.email,
+        })
+
+
+class StaffInviteAcceptView(APIView):
+    """POST /organizations/invite/<token>/accept/ — set a password and log in.
+
+    Validates the token, validates the new password with Django's password
+    validators (StaffInviteAcceptSerializer, mirroring
+    UserRegistrationSerializer.validate), activates the user, marks the staff
+    row active, and returns the same {access, user} shape (plus refresh
+    cookie) as RegisterView so the frontend can reuse its session-setting logic.
+
+    An expired token returns 410 with an 'expired' message; any other
+    unusable token (invalid or already accepted) returns 400 — neither leaks
+    enough to enumerate other invites.
+    """
+
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
+
+    def post(self, request, token):
+        try:
+            invite = resolve_invite(token)
+        except InviteExpiredError as exc:
+            return Response({'detail': exc.message}, status=status.HTTP_410_GONE)
+        except InviteInvalidError as exc:
+            return Response({'detail': exc.message}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = StaffInviteAcceptSerializer(
+            data=request.data, context={'user': invite.staff.user},
+        )
+        serializer.is_valid(raise_exception=True)
+
+        user = accept_invite(invite, serializer.validated_data['password'])
+        payload = _auth_payload(user)
+        response = Response({'access': payload['access'], 'user': payload['user']})
+        _set_refresh_cookie(response, payload['refresh'])
+        return response
 
 
 class OrganizationStaffDetailView(APIView):
@@ -172,8 +470,10 @@ class OrganizationStaffDetailView(APIView):
         return org, staff
 
     def patch(self, request, slug, staff_id):
-        _, staff = self._get_objects(request, slug, staff_id)
-        serializer = OrganizationStaffSerializer(staff, data=request.data, partial=True)
+        org, staff = self._get_objects(request, slug, staff_id)
+        serializer = OrganizationStaffSerializer(
+            staff, data=request.data, partial=True, context={'organization': org},
+        )
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)

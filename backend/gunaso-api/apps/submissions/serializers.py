@@ -73,12 +73,15 @@ class SubmissionSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'reference_number', 'organization', 'organization_name', 'org_slug',
             'type', 'category', 'title', 'description', 'attachment',
-            'status', 'priority', 'is_anonymous', 'assigned_to',
+            'status', 'priority', 'is_anonymous', 'is_public', 'assigned_to',
             'submitter_name', 'submitter_email', 'submitter_phone',
             'created_at', 'updated_at', 'resolved_at', 'timeline',
         ]
         read_only_fields = [
             'id', 'reference_number', 'status', 'created_at', 'updated_at', 'resolved_at',
+            # is_public is only ever changed via SubmissionVisibilityView
+            # (privilege-gated) — never through a plain create/update.
+            'is_public',
         ]
         extra_kwargs = {
             'title': {'min_length': 5},
@@ -92,7 +95,7 @@ class SubmissionSerializer(serializers.ModelSerializer):
         return {
             'id': staff.id,
             'user_name': staff.user.get_full_name() or staff.user.username,
-            'role': staff.role,
+            'role': staff.role.name if staff.role_id else None,
         }
 
     def validate(self, attrs):

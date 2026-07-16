@@ -128,9 +128,22 @@ export const useSubmissionStore = defineStore('submission', () => {
     }
   }
 
+  async function setVisibility(reference, isPublic) {
+    try {
+      const { data } = await submissionsAPI.setVisibility(reference, isPublic)
+      const idx = orgSubmissions.value.findIndex((s) => s.reference_number === reference)
+      if (idx !== -1) orgSubmissions.value[idx] = data
+      if (currentSubmission.value?.reference_number === reference) currentSubmission.value = data
+      return data
+    } catch (err) {
+      error.value = apiErrorMessage(err, 'Failed to update public visibility.')
+      throw err
+    }
+  }
+
   return {
     submissions, currentSubmission, orgSubmissions, orgStats, loading, error, statsError,
     createSubmission, fetchByReference, fetchMySubmissions,
-    fetchOrgSubmissions, fetchOrgStats, updateStatus, addNote, assignSubmission,
+    fetchOrgSubmissions, fetchOrgStats, updateStatus, addNote, assignSubmission, setVisibility,
   }
 })

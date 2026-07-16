@@ -15,6 +15,11 @@ const submissionStore = useSubmissionStore()
 const orgStore = useOrganizationStore()
 const authStore = useAuthStore()
 
+// Org admins implicitly hold every privilege (see authStore.hasPrivilege);
+// a staff member only sees dashboard links/actions their role's privilege
+// set actually grants, gated per-link/per-action rather than all-or-nothing.
+const canViewStaff = computed(() => authStore.hasPrivilege('view_staff'))
+
 const lastUpdated = ref(null)
 const refreshing = ref(false)
 
@@ -252,9 +257,12 @@ onMounted(loadData)
             color="green"
             sub="Resolved or closed" />
         </RouterLink>
-        <RouterLink to="/org/staff" class="block rounded-2xl hover:shadow-md transition-shadow">
+        <RouterLink v-if="canViewStaff" to="/org/staff" class="block rounded-2xl hover:shadow-md transition-shadow">
           <StatsCard label="Staff Members" :value="s.staff_count ?? 0" icon="🧑‍💼" sub="Manage your team" />
         </RouterLink>
+        <div v-else title="You don't have permission to view staff" class="cursor-not-allowed opacity-50">
+          <StatsCard label="Staff Members" :value="s.staff_count ?? 0" icon="🧑‍💼" sub="Manage your team" />
+        </div>
       </div>
 
       <!-- Charts row -->
@@ -362,7 +370,7 @@ onMounted(loadData)
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">View &amp; manage</p>
         </RouterLink>
 
-        <RouterLink to="/org/staff"
+        <RouterLink v-if="canViewStaff" to="/org/staff"
           class="card p-4 text-center hover:shadow-md transition-shadow group">
           <div class="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center mx-auto mb-2 group-hover:bg-blue-100 transition-colors">
             <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -372,6 +380,16 @@ onMounted(loadData)
           <p class="text-sm font-semibold text-gray-800 dark:text-white">Staff</p>
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Manage team</p>
         </RouterLink>
+        <div v-else title="You don't have permission to view staff"
+          class="card p-4 text-center opacity-50 cursor-not-allowed">
+          <div class="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center mx-auto mb-2">
+            <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+          </div>
+          <p class="text-sm font-semibold text-gray-800 dark:text-white">Staff</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Manage team</p>
+        </div>
 
         <RouterLink to="/org/qrcode"
           class="card p-4 text-center hover:shadow-md transition-shadow group">

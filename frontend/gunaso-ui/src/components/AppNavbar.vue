@@ -120,7 +120,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleClickOutside))
                 </div>
                 <div class="py-1">
                   <RouterLink
-                    :to="authStore.isOrgAdmin ? '/org/dashboard' : '/dashboard'"
+                    :to="authStore.hasOrgAccess ? '/org/dashboard' : '/dashboard'"
                     @click="userMenuOpen = false"
                     class="flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

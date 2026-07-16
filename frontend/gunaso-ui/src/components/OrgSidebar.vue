@@ -22,6 +22,12 @@ const orgInitial = computed(() => {
 function isActive(path) {
   return route.path === path || route.path.startsWith(path + '/')
 }
+
+// Org admins implicitly hold every privilege (see authStore.hasPrivilege);
+// staff members only see nav links their role's privilege set actually grants
+// — gated per-link rather than all-or-nothing.
+const canViewStaff = computed(() => authStore.hasPrivilege('view_staff'))
+const canManageRoles = computed(() => authStore.hasPrivilege('manage_roles'))
 </script>
 
 <template>
@@ -88,7 +94,7 @@ function isActive(path) {
       </RouterLink>
 
       <!-- Staff -->
-      <RouterLink to="/org/staff"
+      <RouterLink v-if="canViewStaff" to="/org/staff"
         :class="[
           'flex items-center gap-3 px-2.5 py-2.5 rounded-xl transition-all duration-150',
           isActive('/org/staff')
@@ -105,6 +111,45 @@ function isActive(path) {
           <span v-if="!collapsed && isActive('/org/staff')" class="ml-auto w-1.5 h-1.5 rounded-full bg-primary shrink-0" />
         </Transition>
       </RouterLink>
+      <span v-else
+        title="You don't have permission to view staff"
+        class="flex items-center gap-3 px-2.5 py-2.5 rounded-xl text-white/25 cursor-not-allowed select-none">
+        <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
+        </svg>
+        <Transition name="fade">
+          <span v-if="!collapsed" class="text-sm font-medium truncate">Staff</span>
+        </Transition>
+      </span>
+
+      <!-- Roles -->
+      <RouterLink v-if="canManageRoles" to="/org/roles"
+        :class="[
+          'flex items-center gap-3 px-2.5 py-2.5 rounded-xl transition-all duration-150',
+          isActive('/org/roles')
+            ? 'bg-white/15 text-white'
+            : 'text-white/60 hover:bg-white/10 hover:text-white'
+        ]">
+        <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <Transition name="fade">
+          <span v-if="!collapsed" class="text-sm font-medium truncate">Roles</span>
+        </Transition>
+        <Transition name="fade">
+          <span v-if="!collapsed && isActive('/org/roles')" class="ml-auto w-1.5 h-1.5 rounded-full bg-primary shrink-0" />
+        </Transition>
+      </RouterLink>
+      <span v-else
+        title="You don't have permission to manage roles"
+        class="flex items-center gap-3 px-2.5 py-2.5 rounded-xl text-white/25 cursor-not-allowed select-none">
+        <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <Transition name="fade">
+          <span v-if="!collapsed" class="text-sm font-medium truncate">Roles</span>
+        </Transition>
+      </span>
 
       <!-- QR Code -->
       <RouterLink to="/org/qrcode"

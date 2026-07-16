@@ -1,7 +1,12 @@
+from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
 from django.utils.text import slugify
 from rest_framework import serializers
 
-from .models import Organization, OrganizationStaff, Stakeholder
+from .models import Organization, OrganizationStaff, Stakeholder, StaffRole
+from .privileges import STAFF_PRIVILEGE_KEYS
+
+User = get_user_model()
 
 
 class OrganizationSerializer(serializers.ModelSerializer):
@@ -77,18 +82,83 @@ class StakeholderSerializer(serializers.ModelSerializer):
         return obj.user.get_full_name() or obj.user.username
 
 
+class StaffRoleSerializer(serializers.ModelSerializer):
+    """A per-organization, admin-defined role.
+
+    `organization` is never accepted from the client — it is always taken from
+    `context['organization']`, which the view resolves from the URL slug (and
+    has already permission-checked). This keeps role creation/editing scoped
+    to the organization the caller is authorized for, never client-supplied.
+    """
+
+    staff_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = StaffRole
+        fields = [
+            'id', 'organization', 'name', 'privileges', 'staff_count',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'organization', 'created_at', 'updated_at']
+
+    def get_staff_count(self, obj) -> int:
+        count = getattr(obj, 'staff_count_annotated', None)
+        return count if count is not None else obj.staff_members.count()
+
+    def validate_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError('This field may not be blank.')
+        organization = self.context['organization']
+        qs = StaffRole.objects.filter(organization=organization, name__iexact=value)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError('A role with this name already exists for this organization.')
+        return value
+
+    def validate_privileges(self, value):
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise serializers.ValidationError('Must be a list of privilege key strings.')
+        unknown = sorted(set(value) - STAFF_PRIVILEGE_KEYS)
+        if unknown:
+            raise serializers.ValidationError(f'Unknown privilege key(s): {", ".join(unknown)}.')
+        # De-duplicate while preserving the caller's ordering.
+        deduped = []
+        for key in value:
+            if key not in deduped:
+                deduped.append(key)
+        return deduped
+
+    def create(self, validated_data):
+        validated_data['organization'] = self.context['organization']
+        return StaffRole.objects.create(**validated_data)
+
+
 class OrganizationStaffSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source='user.email', read_only=True)
     user_name = serializers.SerializerMethodField()
     assigned_by_name = serializers.SerializerMethodField()
+    role_name = serializers.CharField(source='role.name', read_only=True)
 
     class Meta:
         model = OrganizationStaff
         fields = [
             'id', 'organization', 'user', 'user_email', 'user_name',
-            'role', 'is_active', 'assigned_by', 'assigned_by_name', 'joined_at',
+            'role', 'role_name', 'status', 'is_active', 'assigned_by', 'assigned_by_name', 'joined_at',
         ]
-        read_only_fields = ['id', 'organization', 'user', 'assigned_by', 'joined_at']
+        # `status` moves invited -> active only through the invite-accept flow
+        # (or resend/re-invite), never via a direct PATCH — see services.py.
+        read_only_fields = ['id', 'organization', 'user', 'status', 'assigned_by', 'joined_at']
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Scope the `role` choices to the organization this staff row belongs
+        # to, so a role id from a different organization is rejected outright
+        # rather than relying solely on `validate_role` below.
+        organization = self.context.get('organization') or getattr(self.instance, 'organization', None)
+        if organization is not None:
+            self.fields['role'].queryset = StaffRole.objects.filter(organization=organization)
 
     def get_user_name(self, obj) -> str:
         return obj.user.get_full_name() or obj.user.username
@@ -97,3 +167,32 @@ class OrganizationStaffSerializer(serializers.ModelSerializer):
         if obj.assigned_by:
             return obj.assigned_by.get_full_name() or obj.assigned_by.username
         return None
+
+    def validate_role(self, value):
+        organization = self.context.get('organization') or getattr(self.instance, 'organization', None)
+        if organization is not None and value.organization_id != organization.id:
+            raise serializers.ValidationError('This role does not belong to this organization.')
+        return value
+
+
+class StaffInviteAcceptSerializer(serializers.Serializer):
+    """POST /organizations/invite/<token>/accept/ body.
+
+    The token itself is resolved by the view before this serializer runs
+    (it needs the invitee's User to validate the password against, e.g. for
+    UserAttributeSimilarityValidator) — the view passes it in via
+    `context['user']`. Mirrors UserRegistrationSerializer.validate: raising
+    Django's ValidationError from inside `validate()` is what lets DRF turn
+    it into a normal 400 field_errors response instead of an unhandled 500.
+    """
+
+    password = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        user = self.context['user']
+        temp_user = User(
+            username=user.username, email=user.email,
+            first_name=user.first_name, last_name=user.last_name,
+        )
+        validate_password(attrs['password'], user=temp_user)
+        return attrs

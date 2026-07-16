@@ -7,6 +7,7 @@ from .views import (
     SubmissionDetailView,
     SubmissionStatusUpdateView,
     SubmissionUpdatesView,
+    SubmissionVisibilityView,
     TrackSubmissionView,
 )
 
@@ -22,4 +23,5 @@ urlpatterns = [
     path('<str:reference_number>/status/', SubmissionStatusUpdateView.as_view(), name='submission-status'),
     path('<str:reference_number>/updates/', SubmissionUpdatesView.as_view(), name='submission-updates'),
     path('<str:reference_number>/assign/', SubmissionAssignView.as_view(), name='submission-assign'),
+    path('<str:reference_number>/visibility/', SubmissionVisibilityView.as_view(), name='submission-visibility'),
 ]

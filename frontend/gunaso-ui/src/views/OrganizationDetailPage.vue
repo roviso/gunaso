@@ -4,18 +4,17 @@ import { useRoute, useRouter } from 'vue-router'
 import { useOrganizationStore } from '@/stores/organization'
 import StatusBadge from '@/components/StatusBadge.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
+import SubmissionTimeline from '@/components/SubmissionTimeline.vue'
 
 const route = useRoute()
 const router = useRouter()
 const orgStore = useOrganizationStore()
 
-const mockSubmissions = ref([
-  { id: 1, title: 'Internet disconnected without notice', category: 'Network Issue', status: 'resolved', created_at: '2024-03-15' },
-  { id: 2, title: 'Overcharged on monthly bill', category: 'Billing', status: 'in_review', created_at: '2024-03-12' },
-  { id: 3, title: 'Poor customer service experience', category: 'Customer Service', status: 'pending', created_at: '2024-03-10' },
-  { id: 4, title: 'Speed much lower than advertised', category: 'Data Speed', status: 'resolved', created_at: '2024-03-08' },
-  { id: 5, title: 'Appreciation for quick resolution', category: 'Feedback', status: 'resolved', created_at: '2024-03-05' },
-])
+const expandedRef = ref(null)
+
+function toggleExpand(sub) {
+  expandedRef.value = expandedRef.value === sub.reference_number ? null : sub.reference_number
+}
 
 function formatDate(d) {
   if (!d) return ''
@@ -25,7 +24,10 @@ function formatDate(d) {
 const bgColors = ['bg-red-500', 'bg-blue-500', 'bg-violet-500', 'bg-emerald-500', 'bg-orange-500', 'bg-cyan-500']
 const logoBg = computed(() => bgColors[(orgStore.currentOrg?.id || 0) % bgColors.length])
 
-onMounted(() => orgStore.fetchOrgBySlug(route.params.slug))
+onMounted(async () => {
+  await orgStore.fetchOrgBySlug(route.params.slug)
+  if (orgStore.currentOrg) orgStore.fetchShowcase(route.params.slug)
+})
 </script>
 
 <template>
@@ -107,15 +109,41 @@ onMounted(() => orgStore.fetchOrgBySlug(route.params.slug))
       <!-- Content -->
       <div class="page-container py-8">
         <div class="max-w-3xl">
-          <h2 class="section-title mb-5">Recent Public Submissions</h2>
-          <div class="space-y-3">
-            <div v-for="sub in mockSubmissions" :key="sub.id"
-              class="card p-4 flex items-center gap-4">
-              <div class="flex-1 min-w-0">
-                <p class="text-sm font-medium text-gray-900 dark:text-white truncate">{{ sub.title }}</p>
-                <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{{ sub.category }} · {{ formatDate(sub.created_at) }}</p>
+          <h2 class="section-title mb-1">Public Showcase</h2>
+          <p class="text-sm text-gray-500 dark:text-gray-400 mb-5">
+            Submissions this organization has chosen to share publicly, and how they were handled.
+          </p>
+
+          <LoadingSpinner v-if="orgStore.showcaseLoading" />
+
+          <div v-else-if="!orgStore.showcase.length" class="card p-10 text-center">
+            <p class="text-gray-500 dark:text-gray-400 text-sm">
+              No public submissions yet — this organization hasn't showcased any complaints or feedback.
+            </p>
+          </div>
+
+          <div v-else class="space-y-3">
+            <div v-for="sub in orgStore.showcase" :key="sub.reference_number"
+              @click="toggleExpand(sub)"
+              class="card-interactive p-4"
+              :class="{ 'ring-2 ring-primary/30 border-primary/30': expandedRef === sub.reference_number }">
+              <div class="flex items-center gap-4">
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm font-medium text-gray-900 dark:text-white truncate">{{ sub.title }}</p>
+                  <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    {{ sub.category || sub.type }} · {{ sub.submitter_name || 'Anonymous' }} · {{ formatDate(sub.created_at) }}
+                  </p>
+                </div>
+                <StatusBadge :status="sub.status" />
               </div>
-              <StatusBadge :status="sub.status" />
+
+              <Transition name="slide">
+                <div v-if="expandedRef === sub.reference_number" class="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700" @click.stop>
+                  <p class="text-sm text-gray-600 dark:text-gray-300 leading-relaxed mb-4">{{ sub.description }}</p>
+                  <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">How it was handled</p>
+                  <SubmissionTimeline :timeline="sub.timeline || []" />
+                </div>
+              </Transition>
             </div>
           </div>
         </div>
@@ -129,3 +157,8 @@ onMounted(() => orgStore.fetchOrgBySlug(route.params.slug))
     </div>
   </div>
 </template>
+
+<style scoped>
+.slide-enter-active, .slide-leave-active { transition: all 0.2s ease; }
+.slide-enter-from, .slide-leave-to { opacity: 0; transform: translateY(-6px); }
+</style>

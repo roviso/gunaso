@@ -66,7 +66,7 @@ async function handleSubmit() {
     const { confirmPassword, ...payload } = form.value
     await authStore.register(payload)
     uiStore.showSuccess('Account created! Welcome to Gunaso.')
-    router.push(onboardingStore.postAuthRoute(authStore.user))
+    router.push(await onboardingStore.postAuthRoute(authStore.user))
   } catch {
     // errors shown from store
   }

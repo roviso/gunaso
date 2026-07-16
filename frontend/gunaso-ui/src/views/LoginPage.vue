@@ -39,7 +39,7 @@ async function handleSubmit() {
     uiStore.showSuccess('Welcome back!')
     const redirect = route.query.redirect
     if (redirect) router.push(String(redirect))
-    else router.push(onboardingStore.postAuthRoute(authStore.user))
+    else router.push(await onboardingStore.postAuthRoute(authStore.user))
   } catch {
     // error is set in the store
   }
@@ -108,11 +108,11 @@ onMounted(() => emailInput.value?.focus())
           <form @submit.prevent="handleSubmit" class="space-y-5" novalidate>
             <!-- Email -->
             <div>
-              <label class="label" for="login-email">Email address</label>
-              <input id="login-email" ref="emailInput" v-model="form.email" type="email" placeholder="you@example.com"
+              <label class="label" for="login-email">Email or username</label>
+              <input id="login-email" ref="emailInput" v-model="form.email" type="text" placeholder="you@example.com"
                 :aria-invalid="!!fieldErrors.email"
                 :class="['input-base', fieldErrors.email ? 'border-red-400 focus:border-red-400 focus:ring-red-200' : '']"
-                autocomplete="email" />
+                autocomplete="username" />
               <p v-if="fieldErrors.email" class="field-error">{{ fieldErrors.email }}</p>
             </div>
 

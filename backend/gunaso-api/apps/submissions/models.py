@@ -84,6 +84,11 @@ class Submission(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='submitted')
     priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES, default='medium')
     is_anonymous = models.BooleanField(default=False)
+    # Staff-controlled showcase flag — when True, this submission (title,
+    # status, timeline, and submitter name if not anonymous) appears on the
+    # organization's public profile page. Never set by the submitter; only
+    # toggled via SubmissionVisibilityView, gated by 'manage_submissions'.
+    is_public = models.BooleanField(default=False)
     assigned_to = models.ForeignKey(
         'organizations.OrganizationStaff',
         on_delete=models.SET_NULL,

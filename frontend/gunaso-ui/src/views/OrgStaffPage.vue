@@ -15,27 +15,60 @@ const showConfirm = ref(false)
 const memberToEdit = ref(null)
 const memberToRemove = ref(null)
 
-const addForm = ref({ user_email: '', role: 'agent' })
+const addMode = ref('invite') // 'invite' | 'credentials'
+const addForm = ref({ user_email: '', role: null })
+const credentialsForm = ref({ username: '', email: '', password: '', role: null })
 const addError = ref('')
 const adding = ref(false)
+const generatedCredentials = ref(null) // { username, password } shown once after credentials creation
 
-const editRole = ref('agent')
+function generatePassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%'
+  let out = ''
+  const bytes = new Uint32Array(14)
+  crypto.getRandomValues(bytes)
+  for (let i = 0; i < 14; i++) out += chars[bytes[i] % chars.length]
+  credentialsForm.value.password = out
+}
+
+const showLinkModal = ref(false)
+const linkCopied = ref(false)
+const pendingInviteLink = ref('')
+
+function openLinkModal(link) {
+  pendingInviteLink.value = link
+  linkCopied.value = false
+  showLinkModal.value = true
+}
+
+async function copyInviteLink() {
+  try {
+    await navigator.clipboard.writeText(pendingInviteLink.value)
+    linkCopied.value = true
+  } catch {
+    uiStore.showError('Could not copy automatically — select and copy the link manually.')
+  }
+}
+
+const editRole = ref(null)
 const saving = ref(false)
 const removing = ref(false)
-
-const ROLES = ['manager', 'supervisor', 'agent', 'viewer']
 
 const slug = computed(() => orgStore.currentOrg?.slug)
 
 async function submitAddStaff() {
-  if (!addForm.value.user_email || adding.value) return
+  if (!addForm.value.user_email || !addForm.value.role || adding.value) return
   adding.value = true
   addError.value = ''
   try {
-    await orgStore.addStaff(slug.value, addForm.value)
-    uiStore.showSuccess('Staff member added.')
+    const result = await orgStore.inviteStaff(slug.value, addForm.value)
     showAddModal.value = false
-    addForm.value = { user_email: '', role: 'agent' }
+    addForm.value = { user_email: '', role: null }
+    if (result?.invited && result?.invite_link) {
+      openLinkModal(result.invite_link)
+    } else {
+      uiStore.showSuccess('Staff member added.')
+    }
   } catch (err) {
     addError.value = typeof err === 'string' ? err : apiErrorMessage(err, 'Failed to add staff member.')
   } finally {
@@ -43,9 +76,26 @@ async function submitAddStaff() {
   }
 }
 
+async function submitCredentialsStaff() {
+  const f = credentialsForm.value
+  if (!f.username || !f.email || !f.password || !f.role || adding.value) return
+  adding.value = true
+  addError.value = ''
+  try {
+    await orgStore.createStaffWithCredentials(slug.value, f)
+    showAddModal.value = false
+    generatedCredentials.value = { username: f.username, password: f.password }
+    credentialsForm.value = { username: '', email: '', password: '', role: null }
+  } catch (err) {
+    addError.value = typeof err === 'string' ? err : apiErrorMessage(err, 'Failed to create staff account.')
+  } finally {
+    adding.value = false
+  }
+}
+
 function openEditRole(member) {
   memberToEdit.value = member
-  editRole.value = member.role || 'agent'
+  editRole.value = member.role ?? null
   showEditModal.value = true
 }
 
@@ -85,7 +135,8 @@ async function confirmRemove() {
 }
 
 onMounted(async () => {
-  if (slug.value) await orgStore.fetchStaff(slug.value)
+  if (!slug.value) return
+  await Promise.all([orgStore.fetchStaff(slug.value), orgStore.fetchRoles(slug.value)])
 })
 </script>
 
@@ -129,7 +180,8 @@ onMounted(async () => {
         :key="member.id"
         :member="member"
         @change-role="openEditRole"
-        @remove="openRemove" />
+        @remove="openRemove"
+        @resend-link="openLinkModal" />
     </div>
 
     <!-- ===== ADD STAFF MODAL ===== -->
@@ -138,8 +190,25 @@ onMounted(async () => {
         <div v-if="showAddModal" class="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="showAddModal = false; addError = ''" />
           <div class="relative bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md border border-gray-100 dark:border-gray-700 p-6">
-            <h2 class="text-lg font-bold text-gray-900 dark:text-white mb-5">Add Staff Member</h2>
-            <div class="space-y-4">
+            <h2 class="text-lg font-bold text-gray-900 dark:text-white mb-1">Add Staff Member</h2>
+
+            <!-- Mode tabs -->
+            <div class="flex gap-1 bg-gray-100 dark:bg-gray-900 rounded-xl p-1 mb-4 mt-3">
+              <button @click="addMode = 'invite'; addError = ''"
+                :class="['flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors', addMode === 'invite' ? 'bg-white dark:bg-gray-700 text-secondary dark:text-white shadow-sm' : 'text-gray-500 dark:text-gray-400']">
+                Invite by email
+              </button>
+              <button @click="addMode = 'credentials'; addError = ''"
+                :class="['flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors', addMode === 'credentials' ? 'bg-white dark:bg-gray-700 text-secondary dark:text-white shadow-sm' : 'text-gray-500 dark:text-gray-400']">
+                Set credentials
+              </button>
+            </div>
+
+            <!-- Invite by email -->
+            <div v-if="addMode === 'invite'" class="space-y-4">
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                If they don't have an account yet, we'll email them an invite link to set one up.
+              </p>
               <div>
                 <label class="label">Email Address *</label>
                 <input v-model="addForm.user_email" type="email" placeholder="staff@example.com"
@@ -147,22 +216,124 @@ onMounted(async () => {
               </div>
               <div>
                 <label class="label">Role</label>
-                <select v-model="addForm.role" class="input-base">
-                  <option v-for="r in ROLES" :key="r" :value="r" class="capitalize">{{ r }}</option>
+                <select v-model="addForm.role" class="input-base" :disabled="orgStore.rolesLoading">
+                  <option :value="null" disabled>{{ orgStore.rolesLoading ? 'Loading roles…' : 'Select a role' }}</option>
+                  <option v-for="r in orgStore.roles" :key="r.id" :value="r.id">{{ r.name }}</option>
+                </select>
+                <p v-if="!orgStore.rolesLoading && !orgStore.roles.length" class="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                  No roles yet — create one in Roles before adding staff.
+                </p>
+              </div>
+              <p v-if="addError" class="field-error">{{ addError }}</p>
+              <div class="flex gap-3 pt-2">
+                <button @click="showAddModal = false; addError = ''" class="btn-secondary flex-1 py-2.5 text-sm">Cancel</button>
+                <button @click="submitAddStaff" :disabled="!addForm.user_email || !addForm.role || adding"
+                  class="btn-primary flex-1 py-2.5 text-sm disabled:opacity-50">
+                  <svg v-if="adding" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                  </svg>
+                  {{ adding ? 'Sending…' : 'Send Invite' }}
+                </button>
+              </div>
+            </div>
+
+            <!-- Set credentials directly -->
+            <div v-else class="space-y-4">
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                Account is active immediately — hand these credentials to your staff member yourself.
+                They'll be asked to set their own password on first login and can verify their email afterward.
+              </p>
+              <div>
+                <label class="label">Username *</label>
+                <input v-model="credentialsForm.username" type="text" placeholder="e.g. ram.thapa" class="input-base" />
+              </div>
+              <div>
+                <label class="label">Email Address *</label>
+                <input v-model="credentialsForm.email" type="email" placeholder="staff@example.com" class="input-base" />
+              </div>
+              <div>
+                <label class="label">Temporary Password *</label>
+                <div class="flex gap-2">
+                  <input v-model="credentialsForm.password" type="text" placeholder="Minimum 8 characters" class="input-base flex-1" />
+                  <button type="button" @click="generatePassword" class="btn-secondary text-xs px-3 shrink-0">Generate</button>
+                </div>
+              </div>
+              <div>
+                <label class="label">Role</label>
+                <select v-model="credentialsForm.role" class="input-base" :disabled="orgStore.rolesLoading">
+                  <option :value="null" disabled>{{ orgStore.rolesLoading ? 'Loading roles…' : 'Select a role' }}</option>
+                  <option v-for="r in orgStore.roles" :key="r.id" :value="r.id">{{ r.name }}</option>
                 </select>
               </div>
               <p v-if="addError" class="field-error">{{ addError }}</p>
+              <div class="flex gap-3 pt-2">
+                <button @click="showAddModal = false; addError = ''" class="btn-secondary flex-1 py-2.5 text-sm">Cancel</button>
+                <button @click="submitCredentialsStaff"
+                  :disabled="!credentialsForm.username || !credentialsForm.email || !credentialsForm.password || !credentialsForm.role || adding"
+                  class="btn-primary flex-1 py-2.5 text-sm disabled:opacity-50">
+                  <svg v-if="adding" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                  </svg>
+                  {{ adding ? 'Creating…' : 'Create Account' }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <!-- ===== INVITE LINK MODAL ===== -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="showLinkModal" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="showLinkModal = false" />
+          <div class="relative bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md border border-gray-100 dark:border-gray-700 p-6">
+            <h2 class="text-lg font-bold text-gray-900 dark:text-white mb-1">Invite link ready</h2>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">
+              We've emailed this link, but if it doesn't arrive you can share it directly — it's single-use and expires soon.
+            </p>
+            <div class="flex items-center gap-2 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2.5">
+              <input :value="pendingInviteLink" readonly
+                class="flex-1 bg-transparent text-xs text-gray-700 dark:text-gray-300 outline-none truncate" />
+              <button @click="copyInviteLink" class="shrink-0 text-xs font-semibold text-primary hover:text-primary-600">
+                {{ linkCopied ? 'Copied!' : 'Copy' }}
+              </button>
             </div>
             <div class="flex gap-3 mt-6">
-              <button @click="showAddModal = false; addError = ''" class="btn-secondary flex-1 py-2.5 text-sm">Cancel</button>
-              <button @click="submitAddStaff" :disabled="!addForm.user_email || adding"
-                class="btn-primary flex-1 py-2.5 text-sm disabled:opacity-50">
-                <svg v-if="adding" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                </svg>
-                {{ adding ? 'Adding…' : 'Add Staff' }}
-              </button>
+              <button @click="showLinkModal = false" class="btn-primary flex-1 py-2.5 text-sm">Done</button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <!-- ===== CREDENTIALS RESULT MODAL ===== -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="generatedCredentials" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="generatedCredentials = null" />
+          <div class="relative bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md border border-gray-100 dark:border-gray-700 p-6">
+            <h2 class="text-lg font-bold text-gray-900 dark:text-white mb-1">Account created</h2>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">
+              This password is shown once — copy it now and hand both to your staff member directly. They'll be required to set a new password on first login.
+            </p>
+            <dl class="space-y-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl p-4 text-sm">
+              <div class="flex items-center justify-between gap-3">
+                <dt class="text-gray-500 dark:text-gray-400">Username</dt>
+                <dd class="font-mono font-semibold text-gray-900 dark:text-white">{{ generatedCredentials.username }}</dd>
+              </div>
+              <div class="flex items-center justify-between gap-3">
+                <dt class="text-gray-500 dark:text-gray-400">Password</dt>
+                <dd class="font-mono font-semibold text-gray-900 dark:text-white">{{ generatedCredentials.password }}</dd>
+              </div>
+            </dl>
+            <div class="flex gap-3 mt-6">
+              <button @click="navigator.clipboard?.writeText(`Username: ${generatedCredentials.username}\nPassword: ${generatedCredentials.password}`)"
+                class="btn-secondary flex-1 py-2.5 text-sm">Copy both</button>
+              <button @click="generatedCredentials = null" class="btn-primary flex-1 py-2.5 text-sm">Done</button>
             </div>
           </div>
         </div>
@@ -177,14 +348,14 @@ onMounted(async () => {
           <div class="relative bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-sm border border-gray-100 dark:border-gray-700 p-6">
             <h2 class="text-lg font-bold text-gray-900 dark:text-white mb-1">Change Role</h2>
             <p class="text-sm text-gray-500 dark:text-gray-400 mb-5">
-              {{ memberToEdit.name || memberToEdit.email }}
+              {{ memberToEdit.user_name || memberToEdit.user_email }}
             </p>
-            <select v-model="editRole" class="input-base">
-              <option v-for="r in ROLES" :key="r" :value="r" class="capitalize">{{ r }}</option>
+            <select v-model="editRole" class="input-base" :disabled="orgStore.rolesLoading">
+              <option v-for="r in orgStore.roles" :key="r.id" :value="r.id">{{ r.name }}</option>
             </select>
             <div class="flex gap-3 mt-6">
               <button @click="showEditModal = false" class="btn-secondary flex-1 py-2.5 text-sm">Cancel</button>
-              <button @click="submitEditRole" :disabled="saving"
+              <button @click="submitEditRole" :disabled="saving || !editRole"
                 class="btn-primary flex-1 py-2.5 text-sm disabled:opacity-50">
                 {{ saving ? 'Saving…' : 'Save Role' }}
               </button>
@@ -203,7 +374,7 @@ onMounted(async () => {
             <h2 class="text-lg font-bold text-gray-900 dark:text-white mb-2">Remove Staff Member?</h2>
             <p class="text-sm text-gray-600 dark:text-gray-300 mb-5">
               Remove
-              <span class="font-semibold">{{ memberToRemove.name || memberToRemove.email }}</span>
+              <span class="font-semibold">{{ memberToRemove.user_name || memberToRemove.user_email }}</span>
               from your organization? This action cannot be undone.
             </p>
             <div class="flex gap-3">

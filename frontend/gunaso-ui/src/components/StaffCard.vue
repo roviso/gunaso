@@ -1,28 +1,65 @@
 <script setup>
-defineProps({
+import { ref } from 'vue'
+import { useOrganizationStore } from '@/stores/organization'
+import { useUIStore } from '@/stores/ui'
+import { apiErrorMessage } from '@/api/index'
+
+const props = defineProps({
   member: { type: Object, required: true },
   canEdit: { type: Boolean, default: true },
 })
-defineEmits(['change-role', 'remove'])
+const emit = defineEmits(['change-role', 'remove', 'resend-link'])
 
-const ROLE_STYLE = {
-  manager:    'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
-  supervisor: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
-  agent:      'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
-  viewer:     'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400',
+const orgStore = useOrganizationStore()
+const uiStore = useUIStore()
+const resending = ref(false)
+
+// Roles are now admin-defined per organization, so we no longer hardcode a
+// color per role name — every role gets the same generic pill style.
+const ROLE_STYLE = 'bg-secondary/10 text-secondary dark:bg-white/10 dark:text-white'
+
+const STATUS_STYLE = {
+  invited:  'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+  active:   'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
+  disabled: 'bg-red-100 text-red-600 dark:bg-red-900/20 dark:text-red-400',
+}
+
+const STATUS_LABEL = {
+  invited: 'Invited',
+  active: 'Active',
+  disabled: 'Disabled',
 }
 
 function initial(m) {
-  const name = m.name || m.user?.name || m.email || '?'
+  const name = m.user_name || m.name || m.user?.name || m.user_email || m.email || '?'
   return name[0].toUpperCase()
 }
 
 function displayName(m) {
-  return m.name || m.user?.name || m.email || 'Unknown'
+  return m.user_name || m.name || m.user?.name || m.user_email || m.email || 'Unknown'
 }
 
 function displayEmail(m) {
-  return m.email || m.user?.email || ''
+  return m.user_email || m.email || m.user?.email || ''
+}
+
+function displayRole(m) {
+  return m.role_name || 'Staff'
+}
+
+async function handleResendInvite() {
+  const slug = orgStore.currentOrg?.slug
+  if (!slug || resending.value) return
+  resending.value = true
+  try {
+    const data = await orgStore.resendInvite(slug, props.member.id)
+    if (data?.invite_link) emit('resend-link', data.invite_link)
+    else uiStore.showSuccess('Invite resent.')
+  } catch (err) {
+    uiStore.showError(apiErrorMessage(err, 'Failed to resend invite.'))
+  } finally {
+    resending.value = false
+  }
 }
 </script>
 
@@ -37,10 +74,13 @@ function displayEmail(m) {
     <div class="flex-1 min-w-0">
       <div class="flex items-center flex-wrap gap-2 mb-0.5">
         <p class="font-semibold text-gray-900 dark:text-white text-sm">{{ displayName(member) }}</p>
-        <span :class="['px-2 py-0.5 rounded-full text-xs font-semibold capitalize', ROLE_STYLE[member.role] || ROLE_STYLE.agent]">
-          {{ member.role || 'agent' }}
+        <span :class="['px-2 py-0.5 rounded-full text-xs font-semibold', ROLE_STYLE]">
+          {{ displayRole(member) }}
         </span>
-        <span v-if="member.is_active === false"
+        <span v-if="member.status" :class="['px-2 py-0.5 rounded-full text-xs font-semibold', STATUS_STYLE[member.status] || STATUS_STYLE.active]">
+          {{ STATUS_LABEL[member.status] || member.status }}
+        </span>
+        <span v-else-if="member.is_active === false"
           class="px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-600 dark:bg-red-900/20 dark:text-red-400">
           Inactive
         </span>
@@ -53,6 +93,17 @@ function displayEmail(m) {
 
     <!-- Actions -->
     <div v-if="canEdit" class="flex items-center gap-1 shrink-0">
+      <button v-if="member.status === 'invited'" @click="handleResendInvite" :disabled="resending"
+        class="p-1.5 rounded-lg text-gray-400 hover:text-secondary dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+        title="Resend invite">
+        <svg v-if="!resending" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+        </svg>
+        <svg v-else class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+        </svg>
+      </button>
       <button @click="$emit('change-role', member)"
         class="p-1.5 rounded-lg text-gray-400 hover:text-secondary dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
         title="Edit role">

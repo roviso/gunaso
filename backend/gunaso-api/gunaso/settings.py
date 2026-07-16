@@ -275,6 +275,9 @@ EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@gunaso.local')
 
+# Staff invite links (apps.organizations.services) expire after this many days.
+STAFF_INVITE_EXPIRY_DAYS = config('STAFF_INVITE_EXPIRY_DAYS', default=7, cast=int)
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Logging — structured console logging (picked up by Docker / systemd)
 # ──────────────────────────────────────────────────────────────────────────────

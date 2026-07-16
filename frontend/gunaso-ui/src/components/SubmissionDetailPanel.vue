@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { useSubmissionStore } from '@/stores/submission'
 import { useOrganizationStore } from '@/stores/organization'
+import { useAuthStore } from '@/stores/auth'
 import { useUIStore } from '@/stores/ui'
 import { apiErrorMessage } from '@/api/index'
 import StatusBadge from '@/components/StatusBadge.vue'
@@ -15,7 +16,14 @@ const emit = defineEmits(['close', 'updated'])
 
 const submissionStore = useSubmissionStore()
 const orgStore = useOrganizationStore()
+const authStore = useAuthStore()
 const uiStore = useUIStore()
+
+// Status transitions mutate a submission (see apps/submissions/services.py::
+// transition_status, gated server-side by 'manage_submissions'). A staff
+// member who can only view submissions must not see an actionable control
+// here — org admins implicitly hold every privilege (authStore.hasPrivilege).
+const canManageSubmissions = computed(() => authStore.hasPrivilege('manage_submissions'))
 
 const statusUpdate = ref({ status: '', note: '' })
 const noteText = ref('')
@@ -23,6 +31,7 @@ const assigneeId = ref('')
 const updatingStatus = ref(false)
 const addingNote = ref(false)
 const assigning = ref(false)
+const togglingVisibility = ref(false)
 
 const VALID_TRANSITIONS = {
   submitted:    ['acknowledged', 'in_review', 'rejected', 'escalated'],
@@ -110,6 +119,20 @@ async function submitAssign() {
   }
 }
 
+async function togglePublic() {
+  if (togglingVisibility.value) return
+  togglingVisibility.value = true
+  try {
+    const updated = await submissionStore.setVisibility(props.submission.reference_number, !props.submission.is_public)
+    uiStore.showSuccess(updated.is_public ? 'Added to the public showcase.' : 'Removed from the public showcase.')
+    emit('updated', updated)
+  } catch (err) {
+    uiStore.showError(apiErrorMessage(err, 'Failed to update public visibility.'))
+  } finally {
+    togglingVisibility.value = false
+  }
+}
+
 const typeIcon = { complaint: '⚠️', feedback: '💬', suggestion: '💡' }
 </script>
 
@@ -181,7 +204,11 @@ const typeIcon = { complaint: '⚠️', feedback: '💬', suggestion: '💡' }
             <!-- Update status -->
             <div>
               <h3 class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3">Update Status</h3>
-              <div v-if="allowedNextStatuses.length" class="space-y-3">
+              <div v-if="!canManageSubmissions" title="You don't have permission to change submission status"
+                class="text-sm text-gray-400 dark:text-gray-500 italic cursor-not-allowed">
+                You don't have permission to change this submission's status.
+              </div>
+              <div v-else-if="allowedNextStatuses.length" class="space-y-3">
                 <select v-model="statusUpdate.status" class="input-base">
                   <option value="">Select new status…</option>
                   <option v-for="s in allowedNextStatuses" :key="s.value" :value="s.value">{{ s.label }}</option>
@@ -229,6 +256,28 @@ const typeIcon = { complaint: '⚠️', feedback: '💬', suggestion: '💡' }
                 <button @click="submitNote" :disabled="!noteText.trim() || addingNote"
                   class="btn-secondary w-full py-2 text-sm disabled:opacity-50">
                   {{ addingNote ? 'Adding…' : 'Add Note' }}
+                </button>
+              </div>
+            </div>
+
+            <!-- Public showcase -->
+            <div v-if="canManageSubmissions">
+              <h3 class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3">Public Showcase</h3>
+              <div class="flex items-center justify-between gap-3 bg-gray-50 dark:bg-gray-700/50 rounded-xl p-4">
+                <div class="min-w-0">
+                  <p class="text-sm font-medium text-gray-700 dark:text-gray-200">
+                    {{ submission.is_public ? 'Visible on the public profile' : 'Not shown on the public profile' }}
+                  </p>
+                  <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    Shows title, status, and timeline{{ submission.is_anonymous ? '' : ' with the submitter\'s name' }} on your organization's public page.
+                  </p>
+                </div>
+                <button @click="togglePublic" :disabled="togglingVisibility"
+                  role="switch" :aria-checked="submission.is_public"
+                  :class="['relative shrink-0 w-11 h-6 rounded-full transition-colors disabled:opacity-50',
+                    submission.is_public ? 'bg-primary' : 'bg-gray-300 dark:bg-gray-600']">
+                  <span :class="['absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform',
+                    submission.is_public ? 'translate-x-5' : 'translate-x-0']" />
                 </button>
               </div>
             </div>
