@@ -5,8 +5,10 @@ from .views import (
     MyStaffAccessView,
     OrganizationDetailView,
     OrganizationListCreateView,
+    OrganizationLocationsView,
     OrganizationPrivilegesView,
     OrganizationQRCodeView,
+    OrganizationRatingView,
     OrganizationRoleDetailView,
     OrganizationRolesView,
     OrganizationSettingsView,
@@ -25,6 +27,7 @@ urlpatterns = [
     path('mine/', MyOrganizationView.as_view(), name='organization-mine'),
     path('my-access/', MyStaffAccessView.as_view(), name='organization-my-access'),
     path('privileges/', OrganizationPrivilegesView.as_view(), name='org-privileges'),
+    path('locations/', OrganizationLocationsView.as_view(), name='org-locations'),
     # Static prefixes before the single-segment <slug:slug> catch-all — Django
     # matches urlpatterns in order, and while the slug converter never spans a
     # '/' (so it can't shadow these multi-segment paths), keeping them grouped
@@ -33,6 +36,7 @@ urlpatterns = [
     path('invite/<str:token>/accept/', StaffInviteAcceptView.as_view(), name='org-invite-accept'),
     path('<slug:slug>/', OrganizationDetailView.as_view(), name='organization-detail'),
     path('<slug:slug>/settings/', OrganizationSettingsView.as_view(), name='org-settings'),
+    path('<slug:slug>/rating/', OrganizationRatingView.as_view(), name='org-rating'),
     path('<slug:slug>/submissions/', OrganizationSubmissionsView.as_view(), name='org-submissions'),
     path('<slug:slug>/showcase/', OrganizationShowcaseView.as_view(), name='org-showcase'),
     path('<slug:slug>/stats/', OrganizationStatsView.as_view(), name='org-stats'),

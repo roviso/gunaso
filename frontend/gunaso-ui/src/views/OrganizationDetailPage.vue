@@ -1,16 +1,65 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 import { useOrganizationStore } from '@/stores/organization'
+import { useUIStore } from '@/stores/ui'
+import { organizationsAPI } from '@/api/organizations'
+import { apiErrorMessage } from '@/api/index'
 import StatusBadge from '@/components/StatusBadge.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
+import StarRating from '@/components/StarRating.vue'
 import SubmissionTimeline from '@/components/SubmissionTimeline.vue'
 
 const route = useRoute()
 const router = useRouter()
+const authStore = useAuthStore()
 const orgStore = useOrganizationStore()
+const uiStore = useUIStore()
 
 const expandedRef = ref(null)
+
+const myScore = ref(null)
+const ratingBusy = ref(false)
+
+async function loadMyRating() {
+  if (!authStore.isAuthenticated) return
+  try {
+    const { data } = await organizationsAPI.getMyRating(route.params.slug)
+    myScore.value = data.score
+  } catch {
+    // Non-critical — the rate control just starts empty.
+  }
+}
+
+async function submitRating(score) {
+  if (ratingBusy.value) return
+  ratingBusy.value = true
+  try {
+    await organizationsAPI.rateOrganization(route.params.slug, score)
+    myScore.value = score
+    uiStore.showSuccess('Thanks for rating!')
+    await orgStore.refreshCurrentOrg(route.params.slug)
+  } catch (err) {
+    uiStore.showError(apiErrorMessage(err, 'Could not save your rating.'))
+  } finally {
+    ratingBusy.value = false
+  }
+}
+
+async function removeRating() {
+  if (ratingBusy.value) return
+  ratingBusy.value = true
+  try {
+    await organizationsAPI.deleteRating(route.params.slug)
+    myScore.value = null
+    await orgStore.refreshCurrentOrg(route.params.slug)
+  } catch (err) {
+    uiStore.showError(apiErrorMessage(err, 'Could not remove your rating.'))
+  } finally {
+    ratingBusy.value = false
+  }
+}
 
 function toggleExpand(sub) {
   expandedRef.value = expandedRef.value === sub.reference_number ? null : sub.reference_number
@@ -26,7 +75,10 @@ const logoBg = computed(() => bgColors[(orgStore.currentOrg?.id || 0) % bgColors
 
 onMounted(async () => {
   await orgStore.fetchOrgBySlug(route.params.slug)
-  if (orgStore.currentOrg) orgStore.fetchShowcase(route.params.slug)
+  if (orgStore.currentOrg) {
+    orgStore.fetchShowcase(route.params.slug)
+    loadMyRating()
+  }
 })
 </script>
 
@@ -62,6 +114,11 @@ onMounted(async () => {
                   {{ orgStore.currentOrg.category }}
                 </span>
               </div>
+              <div v-if="orgStore.currentOrg.average_rating != null" class="flex items-center gap-1.5 mb-2">
+                <StarRating :model-value="orgStore.currentOrg.average_rating" readonly size="sm" />
+                <span class="text-sm font-semibold text-gray-700 dark:text-gray-200">{{ orgStore.currentOrg.average_rating }}</span>
+                <span class="text-xs text-gray-400">({{ orgStore.currentOrg.rating_count }} rating{{ orgStore.currentOrg.rating_count === 1 ? '' : 's' }})</span>
+              </div>
               <p class="text-gray-600 dark:text-gray-400 text-sm leading-relaxed mb-3 max-w-2xl">
                 {{ orgStore.currentOrg.description }}
               </p>
@@ -87,7 +144,8 @@ onMounted(async () => {
       <!-- Stats Bar -->
       <div class="bg-white dark:bg-gray-800 border-b border-gray-100 dark:border-gray-700">
         <div class="page-container py-5">
-          <div class="grid grid-cols-3 divide-x divide-gray-200 dark:divide-gray-700 text-center">
+          <div :class="['grid divide-x divide-gray-200 dark:divide-gray-700 text-center',
+            orgStore.currentOrg.average_rating != null ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3']">
             <div class="px-4">
               <p class="text-2xl font-extrabold text-secondary dark:text-white">{{ orgStore.currentOrg.submission_count?.toLocaleString() }}</p>
               <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Total Submissions</p>
@@ -102,6 +160,10 @@ onMounted(async () => {
               <p class="text-2xl font-extrabold text-secondary dark:text-white">{{ orgStore.currentOrg.avg_resolution_days }}d</p>
               <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Avg. Response</p>
             </div>
+            <div v-if="orgStore.currentOrg.average_rating != null" class="px-4">
+              <p class="text-2xl font-extrabold text-amber-500">{{ orgStore.currentOrg.average_rating }}<span class="text-sm text-gray-400 font-semibold">/5</span></p>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Citizen Rating</p>
+            </div>
           </div>
         </div>
       </div>
@@ -109,6 +171,31 @@ onMounted(async () => {
       <!-- Content -->
       <div class="page-container py-8">
         <div class="max-w-3xl">
+          <!-- Rate this organization -->
+          <div class="card p-5 mb-8 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6">
+            <div class="flex-1">
+              <h2 class="text-sm font-bold text-gray-900 dark:text-white">
+                {{ myScore ? 'Your rating' : 'Rate this organization' }}
+              </h2>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                {{ authStore.isAuthenticated
+                  ? 'How well does this organization handle citizen concerns?'
+                  : 'Sign in to share how well this organization handles citizen concerns.' }}
+              </p>
+            </div>
+            <div v-if="authStore.isAuthenticated" class="flex items-center gap-3">
+              <StarRating :model-value="myScore" size="lg" @update:model-value="submitRating" />
+              <button v-if="myScore" @click="removeRating" :disabled="ratingBusy"
+                class="text-xs text-gray-400 hover:text-red-500 transition-colors disabled:opacity-50">
+                Remove
+              </button>
+            </div>
+            <RouterLink v-else :to="{ name: 'Login', query: { redirect: route.fullPath } }"
+              class="btn-secondary !px-4 !py-2 text-sm shrink-0">
+              Sign in to rate
+            </RouterLink>
+          </div>
+
           <h2 class="section-title mb-1">Public Showcase</h2>
           <p class="text-sm text-gray-500 dark:text-gray-400 mb-5">
             Submissions this organization has chosen to share publicly, and how they were handled.

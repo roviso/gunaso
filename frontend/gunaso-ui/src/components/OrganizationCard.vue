@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
+import StarRating from '@/components/StarRating.vue'
 
 const props = defineProps({ organization: { type: Object, required: true } })
 const router = useRouter()
@@ -48,6 +49,13 @@ function goToSubmit(e) {
           {{ organization.category }}
         </span>
       </div>
+    </div>
+
+    <!-- Rating (only when the org shares it publicly and has ratings) -->
+    <div v-if="organization.average_rating != null" class="flex items-center gap-1.5 -mt-1">
+      <StarRating :model-value="organization.average_rating" readonly size="sm" />
+      <span class="text-xs font-semibold text-gray-700 dark:text-gray-200">{{ organization.average_rating }}</span>
+      <span class="text-xs text-gray-400">({{ organization.rating_count }})</span>
     </div>
 
     <!-- Description -->

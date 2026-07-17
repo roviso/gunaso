@@ -5,6 +5,7 @@ const routes = [
   { path: '/', name: 'Home', component: () => import('@/views/LandingPage.vue') },
   { path: '/organizations', name: 'Organizations', component: () => import('@/views/OrganizationsPage.vue') },
   { path: '/organizations/:slug', name: 'OrganizationDetail', component: () => import('@/views/OrganizationDetailPage.vue') },
+  { path: '/map', name: 'OrganizationsMap', component: () => import('@/views/OrganizationsMapPage.vue') },
   { path: '/submit', name: 'Submit', component: () => import('@/views/SubmitPage.vue') },
   { path: '/submit/:orgSlug', name: 'SubmitForOrg', component: () => import('@/views/SubmitPage.vue') },
   { path: '/track', name: 'Track', component: () => import('@/views/TrackPage.vue') },

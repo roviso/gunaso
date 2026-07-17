@@ -29,9 +29,17 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from .models import OrganizationStaff, StaffInvite, StaffRole
+from .models import Organization, OrganizationRating, OrganizationStaff, StaffInvite, StaffRole
 
 User = get_user_model()
+
+
+def rate_organization(org: Organization, user, score: int) -> OrganizationRating:
+    """Upsert the user's rating for this organization (one row per user per org)."""
+    rating, _created = OrganizationRating.objects.update_or_create(
+        organization=org, user=user, defaults={'score': score},
+    )
+    return rating
 
 
 class InviteError(Exception):

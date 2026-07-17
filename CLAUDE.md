@@ -40,6 +40,7 @@ citizens a structured, trackable channel to hold organizations accountable.
 | API schema | drf-spectacular (Swagger UI at `/api/v1/schema/swagger-ui/`) |
 | Frontend | Vue 3 (Composition API, `<script setup>`) + Vite + Pinia + Vue Router |
 | Styling | Tailwind CSS 3 |
+| Maps | Leaflet 1.9 + OpenStreetMap tiles (public `/map`, settings location picker) |
 | Containerization | Docker + Docker Compose |
 | Reverse proxy | Nginx (single entry point, rate-limits auth endpoints) |
 | WSGI server | gunicorn (in Docker) |
@@ -104,8 +105,17 @@ registration may only pick citizen/org_admin). Also `phone`, `avatar`.
 ### Organization (`apps/organizations`)
 `name`, unique auto-generated `slug`, `description`, `category` (free text sector),
 `logo`, `website`, `contact_email`, `contact_phone`, `address`,
+`latitude`/`longitude` (nullable decimals — set both for the org to appear on the public map),
+`show_rating` (default `True`; when `False` the average rating is hidden from everyone
+except the org's own admin and platform staff),
 `is_verified` (platform admin sets via Django admin; only verified orgs appear publicly),
 `is_active`, `admin` (FK → User; creating an org upgrades the creator to `org_admin`).
+
+### OrganizationRating (`apps/organizations`)
+A citizen's 1–5 star rating of an organization — score only, no review text.
+One row per `(organization, user)`; re-rating upserts (see
+`apps/organizations/services.py::rate_organization`). The public average
+(`average_rating`, `rating_count` on the org serializer) is subject to `show_rating`.
 
 ### Category (`apps/submissions`)
 Per-organization taxonomy; `organization=None` means a global category.
@@ -171,7 +181,10 @@ All endpoints are under `/api/v1/`. OpenAPI docs: `/api/v1/schema/swagger-ui/`.
 | `GET /organizations/` | — | Verified orgs (paginated, `?search=`, `?category=`) |
 | `POST /organizations/` | Bearer | Register org (starts unverified; creator becomes org_admin) |
 | `GET /organizations/mine/` | Bearer | Org managed by current user |
+| `GET /organizations/locations/` | — | Unpaginated map payload: verified orgs with coordinates (+ rating when public) |
 | `GET /organizations/{slug}/` | — | Public org profile |
+| `PATCH /organizations/{slug}/settings/` | org admin / `manage_org_profile` | Edit org profile fields, location, `show_rating` |
+| `GET/PUT/DELETE /organizations/{slug}/rating/` | Bearer | Current user's own 1–5 rating (PUT upserts) |
 | `GET /organizations/{slug}/submissions/` | org admin | Org's submissions |
 | `GET /organizations/{slug}/stats/` | org admin | Aggregate stats |
 | `GET /categories/` | — | Categories (`?org=`, `?org_slug=`) |

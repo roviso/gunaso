@@ -3,7 +3,8 @@ import io
 from urllib.parse import urlparse
 
 from django.conf import settings as django_settings
-from django.db.models import Avg, Count, F, ProtectedError, Q
+from django.db.models import Avg, Count, F, IntegerField, OuterRef, ProtectedError, Q, Subquery
+from django.db.models.functions import Coalesce
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, status
@@ -14,10 +15,11 @@ from rest_framework.views import APIView
 
 from apps.accounts.views import _auth_payload, _set_refresh_cookie
 
-from .models import Organization, OrganizationStaff, StaffRole
+from .models import Organization, OrganizationRating, OrganizationStaff, StaffRole
 from .permissions import HasOrgPrivilege, IsOrgAdminOfOrg
 from .privileges import STAFF_PRIVILEGES
 from .serializers import (
+    OrganizationRatingSerializer,
     OrganizationSerializer,
     OrganizationStaffSerializer,
     StaffInviteAcceptSerializer,
@@ -31,9 +33,24 @@ from .services import (
     create_or_invite_staff,
     create_staff_with_credentials,
     invite_link,
+    rate_organization,
     resend_staff_invite,
     resolve_invite,
 )
+
+
+def _rating_annotations():
+    """Avg/count of ratings as subqueries — joining `ratings` alongside the
+    `submissions` joins in org_queryset_with_counts would cross-multiply rows
+    and skew the aggregates, so keep ratings out of the main join tree."""
+    base = OrganizationRating.objects.filter(organization=OuterRef('pk')).values('organization')
+    return {
+        'average_rating_annotated': Subquery(base.annotate(avg=Avg('score')).values('avg')),
+        'rating_count_annotated': Coalesce(
+            Subquery(base.annotate(cnt=Count('pk')).values('cnt'), output_field=IntegerField()),
+            0,
+        ),
+    }
 
 
 def org_queryset_with_counts():
@@ -48,6 +65,7 @@ def org_queryset_with_counts():
             F('submissions__resolved_at') - F('submissions__created_at'),
             filter=Q(submissions__resolved_at__isnull=False),
         ),
+        **_rating_annotations(),
     ).order_by('name')
 
 
@@ -124,7 +142,73 @@ class MyOrganizationView(APIView):
         org = org_queryset_with_counts().filter(admin=request.user).first()
         if org is None:
             return Response({'detail': 'You do not manage any organization.'}, status=404)
-        return Response(OrganizationSerializer(org).data)
+        return Response(OrganizationSerializer(org, context={'request': request}).data)
+
+
+class OrganizationRatingView(APIView):
+    """GET/PUT/DELETE /organizations/{slug}/rating/ — the current user's own rating.
+
+    PUT upserts (one rating per user per org — re-rating overwrites), GET
+    returns `{score: null}` when the user hasn't rated yet, DELETE withdraws
+    the rating. The public *average* is never served here; it rides on the
+    organization serializer / locations endpoint, subject to `show_rating`.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _get_org(self, slug):
+        return get_object_or_404(Organization, slug=slug, is_active=True)
+
+    def get(self, request, slug):
+        org = self._get_org(slug)
+        rating = OrganizationRating.objects.filter(organization=org, user=request.user).first()
+        return Response({'score': rating.score if rating else None})
+
+    def put(self, request, slug):
+        org = self._get_org(slug)
+        serializer = OrganizationRatingSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        rating = rate_organization(org, request.user, serializer.validated_data['score'])
+        return Response({'score': rating.score})
+
+    def delete(self, request, slug):
+        org = self._get_org(slug)
+        OrganizationRating.objects.filter(organization=org, user=request.user).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class OrganizationLocationsView(APIView):
+    """GET /organizations/locations/ — public, unpaginated map payload.
+
+    Only active, verified organizations that have both coordinates set.
+    Deliberately lightweight (no description/contact fields) since the map
+    may load every organization at once; `average_rating`/`rating_count`
+    are nulled when the org opted out of public ratings.
+    """
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        orgs = Organization.objects.filter(
+            is_active=True, is_verified=True,
+            latitude__isnull=False, longitude__isnull=False,
+        ).annotate(**_rating_annotations()).order_by('name')
+
+        return Response([
+            {
+                'name': org.name,
+                'slug': org.slug,
+                'category': org.category,
+                'latitude': float(org.latitude),
+                'longitude': float(org.longitude),
+                'average_rating': (
+                    round(float(org.average_rating_annotated), 1)
+                    if org.show_rating and org.average_rating_annotated is not None else None
+                ),
+                'rating_count': org.rating_count_annotated if org.show_rating else None,
+            }
+            for org in orgs
+        ])
 
 
 class OrganizationSettingsView(APIView):
@@ -139,7 +223,9 @@ class OrganizationSettingsView(APIView):
     def patch(self, request, slug):
         org = get_object_or_404(Organization, slug=slug)
         HasOrgPrivilege('manage_org_profile').check(request, org)
-        serializer = OrganizationSerializer(org, data=request.data, partial=True)
+        serializer = OrganizationSerializer(
+            org, data=request.data, partial=True, context={'request': request},
+        )
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)

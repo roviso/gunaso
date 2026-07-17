@@ -1,3 +1,6 @@
+from decimal import Decimal
+
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
 from apps.accounts.models import User
@@ -14,6 +17,19 @@ class Organization(models.Model):
     contact_email = models.EmailField()
     contact_phone = models.CharField(max_length=20, blank=True)
     address = models.CharField(max_length=255, blank=True)
+    # Plain decimal coordinates (no PostGIS) — only used to place a marker on
+    # the public map. Both must be set for the org to appear there.
+    latitude = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True,
+        validators=[MinValueValidator(Decimal('-90')), MaxValueValidator(Decimal('90'))],
+    )
+    longitude = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True,
+        validators=[MinValueValidator(Decimal('-180')), MaxValueValidator(Decimal('180'))],
+    )
+    # Whether the average citizen rating is shown publicly. Default public
+    # (accountability-first); the org can opt out in its settings page.
+    show_rating = models.BooleanField(default=True)
     is_verified = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     admin = models.ForeignKey(User, on_delete=models.CASCADE, related_name='managed_organizations')
@@ -89,6 +105,30 @@ class OrganizationStaff(models.Model):
 
     def __str__(self):
         return f'{self.user.username} @ {self.organization.name} [{self.role.name}]'
+
+
+class OrganizationRating(models.Model):
+    """A citizen's 1–5 star rating of an organization — one per user per org.
+
+    Score-only (no review text). Re-rating updates the existing row rather than
+    creating a new one (enforced by the unique constraint + upsert in services).
+    """
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='ratings')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='organization_ratings')
+    score = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('organization', 'user')
+        ordering = ['-updated_at']
+        verbose_name_plural = 'organization ratings'
+
+    def __str__(self):
+        return f'{self.user.username} rated {self.organization.name}: {self.score}/5'
 
 
 class StaffInvite(models.Model):

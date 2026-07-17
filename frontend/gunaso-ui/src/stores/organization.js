@@ -211,6 +211,17 @@ export const useOrganizationStore = defineStore('organization', () => {
     }
   }
 
+  // Re-fetch currentOrg without toggling `loading`, so in-place refreshes
+  // (e.g. after rating) don't flash the full-page spinner.
+  async function refreshCurrentOrg(slug) {
+    try {
+      const { data } = await organizationsAPI.getBySlug(slug)
+      currentOrg.value = data
+    } catch {
+      // Non-critical: keep showing the last known org data.
+    }
+  }
+
   async function updateSettings(slug, payload) {
     const { data } = await organizationsAPI.updateSettings(slug, payload)
     currentOrg.value = { ...currentOrg.value, ...data }
@@ -239,7 +250,7 @@ export const useOrganizationStore = defineStore('organization', () => {
     qrCode, qrLoading, qrError,
     dashboardStats, statsLoading,
     showcase, showcaseLoading, showcaseError,
-    fetchOrganizations, fetchOrgBySlug, fetchMyOrg, updateSettings,
+    fetchOrganizations, fetchOrgBySlug, fetchMyOrg, refreshCurrentOrg, updateSettings,
     fetchStaff, inviteStaff, createStaffWithCredentials, resendInvite, removeStaff, updateStaffRole,
     fetchRoles, createRole, updateRole, deleteRole,
     fetchPrivilegeCatalog,

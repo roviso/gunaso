@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Organization, OrganizationStaff, Stakeholder, StaffInvite, StaffRole
+from .models import Organization, OrganizationRating, OrganizationStaff, Stakeholder, StaffInvite, StaffRole
 
 
 @admin.register(Organization)
@@ -28,6 +28,23 @@ class OrganizationStaffAdmin(admin.ModelAdmin):
     list_display = ['user', 'organization', 'role', 'status', 'is_active', 'assigned_by', 'joined_at']
     list_filter = ['organization', 'role', 'status', 'is_active']
     search_fields = ['user__email', 'user__username', 'organization__name']
+
+
+@admin.register(OrganizationRating)
+class OrganizationRatingAdmin(admin.ModelAdmin):
+    """Ratings belong to citizens — platform staff may inspect or remove abuse,
+    but never author/alter scores on a user's behalf."""
+
+    list_display = ['organization', 'user', 'score', 'created_at', 'updated_at']
+    list_filter = ['score', 'organization']
+    search_fields = ['organization__name', 'user__email', 'user__username']
+    readonly_fields = ['organization', 'user', 'score', 'created_at', 'updated_at']
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(StaffInvite)

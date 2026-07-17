@@ -14,12 +14,16 @@ class OrganizationSerializer(serializers.ModelSerializer):
     submission_count = serializers.SerializerMethodField()
     resolved_percent = serializers.SerializerMethodField()
     avg_resolution_days = serializers.SerializerMethodField()
+    average_rating = serializers.SerializerMethodField()
+    rating_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Organization
         fields = [
             'id', 'name', 'slug', 'description', 'category',
             'logo', 'website', 'contact_email', 'contact_phone', 'address',
+            'latitude', 'longitude', 'show_rating',
+            'average_rating', 'rating_count',
             'verified', 'is_verified', 'submission_count',
             'resolved_percent', 'avg_resolution_days', 'created_at',
         ]
@@ -42,6 +46,36 @@ class OrganizationSerializer(serializers.ModelSerializer):
     def get_avg_resolution_days(self, obj) -> float:
         avg = getattr(obj, 'avg_resolution_annotated', None)
         return round(avg.total_seconds() / 86400, 1) if avg else 0
+
+    def get_average_rating(self, obj):
+        if hasattr(obj, 'average_rating_annotated'):
+            avg = obj.average_rating_annotated
+        else:
+            from django.db.models import Avg
+            avg = obj.ratings.aggregate(avg=Avg('score'))['avg']
+        return round(float(avg), 1) if avg is not None else None
+
+    def get_rating_count(self, obj) -> int:
+        count = getattr(obj, 'rating_count_annotated', None)
+        return count if count is not None else obj.ratings.count()
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # An org that opted out of public ratings still sees its own numbers
+        # (its admin and platform staff do); everyone else gets null, mirroring
+        # how HasOrgPrivilege treats admin/staff as implicit insiders.
+        if not instance.show_rating and not self._can_see_hidden_rating(instance):
+            data['average_rating'] = None
+            data['rating_count'] = None
+        return data
+
+    def _can_see_hidden_rating(self, org) -> bool:
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        return bool(
+            user and user.is_authenticated
+            and (org.admin_id == user.id or user.is_staff)
+        )
 
     def validate_name(self, value):
         qs = Organization.objects.filter(name__iexact=value.strip())
@@ -173,6 +207,12 @@ class OrganizationStaffSerializer(serializers.ModelSerializer):
         if organization is not None and value.organization_id != organization.id:
             raise serializers.ValidationError('This role does not belong to this organization.')
         return value
+
+
+class OrganizationRatingSerializer(serializers.Serializer):
+    """PUT /organizations/{slug}/rating/ body — score only, 1–5."""
+
+    score = serializers.IntegerField(min_value=1, max_value=5)
 
 
 class StaffInviteAcceptSerializer(serializers.Serializer):

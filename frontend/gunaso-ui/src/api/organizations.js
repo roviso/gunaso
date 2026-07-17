@@ -8,6 +8,16 @@ export const organizationsAPI = {
   // `data` may be a plain object or a FormData (when a new logo file is
   // included) — axios sets the multipart header automatically for FormData.
   updateSettings: (slug, data) => api.patch(`/organizations/${slug}/settings/`, data),
+
+  // The current user's own 1–5 rating of an org: GET returns {score: null}
+  // when unrated, PUT upserts, DELETE withdraws. The public average rides on
+  // the org serializer (average_rating/rating_count, subject to show_rating).
+  getMyRating: (slug) => api.get(`/organizations/${slug}/rating/`),
+  rateOrganization: (slug, score) => api.put(`/organizations/${slug}/rating/`, { score }),
+  deleteRating: (slug) => api.delete(`/organizations/${slug}/rating/`),
+
+  // Public, unpaginated map payload: verified orgs with coordinates set.
+  getLocations: () => api.get('/organizations/locations/'),
   getStats: (slug) => api.get(`/organizations/${slug}/stats/`),
   getSubmissions: (slug, params) => api.get(`/organizations/${slug}/submissions/`, { params }),
   // Public showcase: submissions staff have opted to display on the org's

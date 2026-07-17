@@ -16,6 +16,7 @@ const userMenuRef = ref(null)
 const navLinks = [
   { name: 'Home', to: '/' },
   { name: 'Organizations', to: '/organizations' },
+  { name: 'Map', to: '/map' },
   { name: 'Submit', to: '/submit' },
   { name: 'Track', to: '/track' },
 ]
