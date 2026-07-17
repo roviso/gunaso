@@ -5,6 +5,9 @@ export const organizationsAPI = {
   getBySlug: (slug) => api.get(`/organizations/${slug}/`),
   getMine: () => api.get('/organizations/mine/'),
   register: (data) => api.post('/organizations/', data),
+  // `data` may be a plain object or a FormData (when a new logo file is
+  // included) — axios sets the multipart header automatically for FormData.
+  updateSettings: (slug, data) => api.patch(`/organizations/${slug}/settings/`, data),
   getStats: (slug) => api.get(`/organizations/${slug}/stats/`),
   getSubmissions: (slug, params) => api.get(`/organizations/${slug}/submissions/`, { params }),
   // Public showcase: submissions staff have opted to display on the org's

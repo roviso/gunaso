@@ -127,6 +127,24 @@ class MyOrganizationView(APIView):
         return Response(OrganizationSerializer(org).data)
 
 
+class OrganizationSettingsView(APIView):
+    """PATCH /organizations/{slug}/settings/ — edit the organization's own profile
+    fields (name, description, category, logo, website, contact info, address).
+
+    Requires org admin, platform staff, or the 'manage_org_profile' privilege.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, slug):
+        org = get_object_or_404(Organization, slug=slug)
+        HasOrgPrivilege('manage_org_profile').check(request, org)
+        serializer = OrganizationSerializer(org, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+
 class OrganizationSubmissionsView(generics.ListAPIView):
     """GET /organizations/{slug}/submissions/ — org admin or 'view_submissions' privilege."""
 

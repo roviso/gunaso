@@ -211,6 +211,12 @@ export const useOrganizationStore = defineStore('organization', () => {
     }
   }
 
+  async function updateSettings(slug, payload) {
+    const { data } = await organizationsAPI.updateSettings(slug, payload)
+    currentOrg.value = { ...currentOrg.value, ...data }
+    return data
+  }
+
   async function fetchShowcase(slug, params = {}) {
     showcaseLoading.value = true
     showcaseError.value = null
@@ -233,7 +239,7 @@ export const useOrganizationStore = defineStore('organization', () => {
     qrCode, qrLoading, qrError,
     dashboardStats, statsLoading,
     showcase, showcaseLoading, showcaseError,
-    fetchOrganizations, fetchOrgBySlug, fetchMyOrg,
+    fetchOrganizations, fetchOrgBySlug, fetchMyOrg, updateSettings,
     fetchStaff, inviteStaff, createStaffWithCredentials, resendInvite, removeStaff, updateStaffRole,
     fetchRoles, createRole, updateRole, deleteRole,
     fetchPrivilegeCatalog,
