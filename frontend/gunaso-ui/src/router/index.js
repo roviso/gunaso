@@ -75,6 +75,22 @@ const routes = [
       { path: 'qrcode', name: 'OrgQRCode', component: () => import('@/views/OrgQRCodePage.vue') },
     ]
   },
+  {
+    path: '/admin',
+    component: () => import('@/layouts/AdminLayout.vue'),
+    // superAdmin = User.is_superuser (apps/platform_admin/permissions.py::IsSuperAdmin) —
+    // deliberately independent of orgAccess/isOrgAdmin; a superadmin doesn't
+    // need to manage or belong to any organization.
+    meta: { requiresAuth: true, superAdmin: true, fullPage: true },
+    children: [
+      { path: '', redirect: { name: 'AdminOverview' } },
+      { path: 'overview', name: 'AdminOverview', component: () => import('@/views/AdminOverviewPage.vue') },
+      { path: 'organizations', name: 'AdminOrganizations', component: () => import('@/views/AdminOrganizationsPage.vue') },
+      { path: 'users', name: 'AdminUsers', component: () => import('@/views/AdminUsersPage.vue') },
+      { path: 'submissions', name: 'AdminSubmissions', component: () => import('@/views/AdminSubmissionsPage.vue') },
+      { path: 'audit-log', name: 'AdminAuditLog', component: () => import('@/views/AdminAuditLogPage.vue') },
+    ]
+  },
   { path: '/:pathMatch(.*)*', redirect: '/' }
 ]
 
@@ -98,6 +114,10 @@ router.beforeEach(async (to, _from, next) => {
     return next({ name: 'ChangePassword' })
   }
 
+  if (to.meta.superAdmin && !auth.isSuperAdmin) {
+    return next(auth.hasOrgAccess ? { name: 'OrgDashboard' } : { name: 'Dashboard' })
+  }
+
   if (to.meta.orgAccess) {
     // Staff access isn't knowable from the `user` object alone — it's a
     // separate lookup (authStore.fetchStaffAccess). Resolve it lazily, once,
@@ -113,6 +133,7 @@ router.beforeEach(async (to, _from, next) => {
   }
 
   if (to.meta.guest && auth.isAuthenticated) {
+    if (auth.isSuperAdmin) return next({ name: 'AdminOverview' })
     return next(auth.hasOrgAccess ? { name: 'OrgDashboard' } : { name: 'Dashboard' })
   }
 

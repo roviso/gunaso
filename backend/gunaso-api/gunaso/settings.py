@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     'apps.accounts',
     'apps.organizations',
     'apps.submissions',
+    'apps.platform_admin',
 ]
 
 MIDDLEWARE = [

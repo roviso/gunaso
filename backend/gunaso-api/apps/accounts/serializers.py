@@ -25,10 +25,12 @@ class UserSerializer(serializers.ModelSerializer):
             'user_type', 'phone', 'avatar', 'date_joined',
             'organization_name', 'organization_slug',
             'email_verified', 'must_change_password',
+            'is_staff', 'is_superuser',
         ]
         read_only_fields = [
             'id', 'username', 'email', 'user_type', 'date_joined',
             'email_verified', 'must_change_password',
+            'is_staff', 'is_superuser',
         ]
 
     def get_name(self, obj) -> str:

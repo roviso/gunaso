@@ -32,6 +32,10 @@ export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = computed(() => !!user.value)
   const isCitizen = computed(() => user.value?.user_type === 'citizen')
   const isOrgAdmin = computed(() => user.value?.user_type === 'org_admin')
+  // Platform superadmin — see apps/platform_admin/permissions.py::IsSuperAdmin.
+  // Distinct from `user.is_staff`, which the backend also sets on promotion
+  // but which alone never grants dashboard access.
+  const isSuperAdmin = computed(() => !!user.value?.is_superuser)
   const userInitial = computed(() => user.value?.name?.[0]?.toUpperCase() || 'U')
 
   // True for an admin-created staff account that hasn't set its own password
@@ -198,7 +202,7 @@ export const useAuthStore = defineStore('auth', () => {
   return {
     user, loading, error,
     staffAccess, staffAccessLoading, staffAccessError,
-    isAuthenticated, isCitizen, isOrgAdmin, userInitial,
+    isAuthenticated, isCitizen, isOrgAdmin, isSuperAdmin, userInitial,
     hasOrgAccess, accessibleOrgSlug, mustChangePassword, emailVerified,
     init, login, register, fetchMe, logout,
     fetchStaffAccess, hasPrivilege,

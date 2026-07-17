@@ -64,11 +64,14 @@ gunaso/
 │   ├── apps/
 │   │   ├── accounts/              # User model, register/login/refresh/logout/me
 │   │   ├── organizations/         # Organization, Stakeholder + org endpoints
-│   │   └── submissions/           # Submission, Category, StatusUpdate
-│   │       ├── services.py        # Business logic (reference gen, transitions, stats)
-│   │       ├── validators.py      # Attachment validation (size/ext/magic bytes)
-│   │       ├── org_urls.py        # /api/v1/org/* convenience endpoints
-│   │       └── management/commands/seed_data.py
+│   │   ├── submissions/           # Submission, Category, StatusUpdate
+│   │   │   ├── services.py        # Business logic (reference gen, transitions, stats)
+│   │   │   ├── validators.py      # Attachment validation (size/ext/magic bytes)
+│   │   │   ├── org_urls.py        # /api/v1/org/* convenience endpoints
+│   │   │   └── management/commands/seed_data.py
+│   │   └── platform_admin/        # Superadmin dashboard: PlatformAuditLog + /api/v1/admin/*
+│   │       ├── permissions.py     # IsSuperAdmin (gates on User.is_superuser)
+│   │       └── services.py        # verify/activate org, block/promote user, platform_overview()
 │   ├── conftest.py                # Shared pytest fixtures
 │   ├── pytest.ini
 │   ├── requirements.txt           # Pinned production deps
@@ -79,9 +82,10 @@ gunaso/
 ├── frontend/gunaso-ui/
 │   ├── src/
 │   │   ├── api/                   # axios client (in-memory token + cookie refresh)
-│   │   ├── stores/                # Pinia: auth, organization, submission, ui
+│   │   ├── stores/                # Pinia: auth, organization, submission, admin, ui
 │   │   ├── router/                # Routes + auth guards
-│   │   ├── views/                 # Page components
+│   │   ├── layouts/               # OrgLayout.vue, AdminLayout.vue
+│   │   ├── views/                 # Page components (incl. Admin*Page.vue — superadmin dashboard)
 │   │   └── components/            # Reusable UI components
 │   ├── vite.config.js             # Dev proxy: /api and /media → localhost:8000
 │   ├── Dockerfile                 # Multi-stage: node build → nginx static
@@ -101,6 +105,9 @@ gunaso/
 Extends `AbstractUser`. Login identifier is **email** (unique). `user_type`:
 `citizen` (default), `org_admin`, `stakeholder` (admin-assigned only — self-service
 registration may only pick citizen/org_admin). Also `phone`, `avatar`.
+
+`is_staff`/`is_superuser` (inherited from `AbstractUser`) carry platform-wide meaning
+here — see section 8's permission model for how the two are distinct.
 
 ### Organization (`apps/organizations`)
 `name`, unique auto-generated `slug`, `description`, `category` (free text sector),
@@ -137,6 +144,15 @@ string and resolved/created server-side.
 **Append-only audit log** — never updated or deleted (enforced in Django admin too).
 `submission`, `updated_by`, `old_status`, `new_status`, `note`, `created_at`.
 Serialized to the frontend as `timeline`.
+
+### PlatformAuditLog (`apps/platform_admin`)
+**Append-only audit log** of every superadmin dashboard action (organization
+verify/activate, user block/unblock/promote/demote) — same append-only contract as
+`StatusUpdate` (admin change/delete permissions disabled). `actor` (FK → User,
+`SET_NULL`), `action` (choices — see `apps/platform_admin/models.py`), `target_type`,
+`target_id`, `target_repr` (a snapshot label so the log stays readable even if the
+target is later renamed/deleted), `note`, `created_at`. Written exclusively by
+`apps/platform_admin/services.py` — never construct one directly from a view.
 
 ---
 
@@ -195,6 +211,15 @@ All endpoints are under `/api/v1/`. OpenAPI docs: `/api/v1/schema/swagger-ui/`.
 | `PATCH /submissions/{ref}/status/` | org admin | Validated status transition |
 | `GET/POST /submissions/{ref}/updates/` | participants / org admin | Audit trail / staff note |
 | `GET /org/submissions/`, `GET /org/stats/` | org admin | Dashboard convenience endpoints |
+| `GET /admin/overview/` | superadmin | Platform-wide analytics (orgs/users/submissions totals, 30-day trend) |
+| `GET /admin/organizations/` | superadmin | Every organization, verified or not (paginated, `?search=`, `?is_verified=`, `?is_active=`) |
+| `PATCH /admin/organizations/{slug}/` | superadmin | Verify/unverify and/or activate/deactivate an organization |
+| `GET /admin/organizations/{slug}/staff/` | superadmin | That organization's staff roster |
+| `GET /admin/users/` | superadmin | Every user (paginated, `?search=`, `?user_type=`, `?is_active=`, `?is_superuser=`) |
+| `POST /admin/users/{id}/block/`, `.../unblock/` | superadmin | Deactivate/reactivate an account; block also revokes its refresh tokens |
+| `POST /admin/users/{id}/promote/`, `.../demote/` | superadmin | Grant/revoke superadmin (`is_staff` + `is_superuser`) |
+| `GET /admin/submissions/` | superadmin | Cross-organization submission feed, incl. anonymous submitter identity |
+| `GET /admin/audit-log/` | superadmin | Append-only record of every superadmin action (`PlatformAuditLog`) |
 | `GET /health/` | — | DB-checking liveness probe |
 
 ### Conventions
@@ -274,10 +299,21 @@ All endpoints are under `/api/v1/`. OpenAPI docs: `/api/v1/schema/swagger-ui/`.
 | Citizen | + own submissions list, own profile |
 | Org admin | + their org's submissions/stats, status transitions on them |
 | Platform staff (`is_staff`) | + Django admin, sees anonymous submitter identity |
+| Platform superadmin (`is_superuser`) | + `/admin` dashboard: verify/deactivate any organization, block/unblock any user, promote/demote other superadmins, cross-org submission feed, `PlatformAuditLog` |
 
 **Anonymity rule:** when `is_anonymous=True`, submitter identity fields are redacted in every
 API response except to platform staff. The public track endpoint never includes contact fields
 for anyone. This is enforced in `SubmissionSerializer.to_representation` — never bypass it.
+
+**`is_staff` vs `is_superuser`:** these are deliberately two different gates, not synonyms.
+`is_staff` is the long-standing "platform staff" bypass used throughout the app (anonymity
+reveal, `IsOrgAdminOfOrg`, `HasOrgPrivilege` — see `apps/organizations/permissions.py`).
+`is_superuser` is checked only by `apps/platform_admin/permissions.py::IsSuperAdmin` and gates
+the `/admin` dashboard specifically. `services.promote_to_superadmin` sets **both** flags, so a
+superadmin also inherits every existing `is_staff` bypass — but a plain `is_staff=True` account
+(e.g. the `platform_staff` test fixture) must never reach `/admin`. Guardrails in
+`apps/platform_admin/services.py`: a superadmin cannot block or demote their own account, and
+the last remaining superadmin cannot be demoted.
 
 ---
 
@@ -295,7 +331,12 @@ for anyone. This is enforced in `SubmissionSerializer.to_representation` — nev
 - Reference numbers are random, not sequential — no enumeration of submissions.
 - ORM only — raw SQL is forbidden outside migrations.
 - `v-html` is forbidden in the frontend unless sanitized with DOMPurify.
-- `StatusUpdate` records are append-only; admin change/delete permissions are disabled.
+- `StatusUpdate` and `PlatformAuditLog` records are append-only; admin change/delete
+  permissions are disabled for both.
+- Blocking a user (`apps/platform_admin/services.py::block_user`) sets `is_active=False`
+  (rejected immediately by `JWTAuthentication`/`RefreshView` on every subsequent request,
+  no need to wait out the access token's lifetime) and blacklists every outstanding refresh
+  token for that user as defense in depth.
 - Unhandled exceptions return an opaque 500 envelope; details go to server logs only.
 
 ---

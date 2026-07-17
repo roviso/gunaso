@@ -37,6 +37,9 @@ export const useOnboardingStore = defineStore('onboarding', () => {
    * misrouted to the citizen dashboard instead of /org/dashboard.
    */
   async function postAuthRoute(user) {
+    // Superadmins skip the citizen/org onboarding flow entirely — the
+    // control room is their home, not the welcome wizard.
+    if (user?.is_superuser) return { name: 'AdminOverview' }
     if (user?.id && !hasOnboarded(user.id)) return { name: 'Welcome' }
     if (user?.user_type === 'org_admin') return { name: 'OrgDashboard' }
 
