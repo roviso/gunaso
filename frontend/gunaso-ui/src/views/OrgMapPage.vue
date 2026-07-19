@@ -12,6 +12,14 @@ const authStore = useAuthStore()
 const orgStore = useOrganizationStore()
 
 const canView = computed(() => authStore.hasPrivilege('view_submissions'))
+const canManageProfile = computed(() => authStore.hasPrivilege('manage_org_profile'))
+
+// Verified orgs need both coordinates set (in Settings) to appear on the
+// public /map — mirror that rule here so admins learn why they're missing.
+const missingOrgLocation = computed(() => {
+  const org = orgStore.currentOrg
+  return !!org && (org.latitude == null || org.longitude == null)
+})
 
 const loading = ref(true)
 const loadError = ref('')
@@ -151,6 +159,25 @@ onBeforeUnmount(() => {
       <h1 class="text-xl font-extrabold text-secondary dark:text-white">Branch Map</h1>
       <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
         Your branches, with recent gunaso popping up live so you can see where activity is coming from.
+      </p>
+    </div>
+
+    <div v-if="missingOrgLocation"
+      class="flex items-start gap-3 p-4 rounded-2xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 text-sm text-amber-800 dark:text-amber-200">
+      <svg class="w-5 h-5 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
+      </svg>
+      <p>
+        Your organization doesn't have a location yet, so it won't appear on the
+        <RouterLink to="/map" class="font-semibold underline hover:no-underline">public organizations map</RouterLink>.
+        <template v-if="canManageProfile">
+          Set it on the map in
+          <RouterLink to="/org/settings" class="font-semibold underline hover:no-underline">Settings</RouterLink>.
+        </template>
+        <template v-else>
+          Ask your organization admin to set it in Settings.
+        </template>
       </p>
     </div>
 
