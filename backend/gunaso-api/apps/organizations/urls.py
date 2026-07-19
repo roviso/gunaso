@@ -3,6 +3,9 @@ from django.urls import path
 from .views import (
     MyOrganizationView,
     MyStaffAccessView,
+    OrganizationBranchDetailView,
+    OrganizationBranchQRCodeView,
+    OrganizationBranchesView,
     OrganizationDetailView,
     OrganizationListCreateView,
     OrganizationLocationsView,
@@ -50,4 +53,11 @@ urlpatterns = [
     path('<slug:slug>/roles/', OrganizationRolesView.as_view(), name='org-roles'),
     path('<slug:slug>/roles/<int:role_id>/', OrganizationRoleDetailView.as_view(), name='org-role-detail'),
     path('<slug:slug>/qrcode/', OrganizationQRCodeView.as_view(), name='org-qrcode'),
+    path('<slug:slug>/branches/', OrganizationBranchesView.as_view(), name='org-branches'),
+    path('<slug:slug>/branches/<int:branch_id>/', OrganizationBranchDetailView.as_view(), name='org-branch-detail'),
+    path(
+        '<slug:slug>/branches/<int:branch_id>/qrcode/',
+        OrganizationBranchQRCodeView.as_view(),
+        name='org-branch-qrcode',
+    ),
 ]

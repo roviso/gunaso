@@ -74,6 +74,13 @@ class Submission(models.Model):
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name='submissions',
     )
+    # Which physical branch this gunaso came from — set when the citizen
+    # scanned a branch-specific QR code. Null for org-wide QR/web submissions
+    # and for submissions made before branches existed.
+    branch = models.ForeignKey(
+        'organizations.Branch', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='submissions',
+    )
     category = models.ForeignKey(
         Category, on_delete=models.SET_NULL, null=True, blank=True,
     )

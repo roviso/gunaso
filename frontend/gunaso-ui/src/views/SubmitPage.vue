@@ -5,6 +5,7 @@ import { useOrganizationStore } from '@/stores/organization'
 import { useSubmissionStore } from '@/stores/submission'
 import { useUIStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
+import { organizationsAPI } from '@/api/organizations'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 
 const route = useRoute()
@@ -35,6 +36,15 @@ const form = ref({
 })
 
 const errors = ref({})
+// "Add more details" is collapsed by default — category, title, priority, and
+// attachment are all optional, so most citizens never need to open it.
+const showMoreDetails = ref(false)
+
+// Branch-specific QR flow: /submit/:orgSlug?branch=<code>. `resolvedBranch` is
+// display-only (name for the banner); the raw code is always what's sent —
+// the backend re-validates it's active and belongs to this org.
+const branchCode = computed(() => route.query.branch || null)
+const resolvedBranch = ref(null)
 
 const ORG_CATEGORIES = {
   Telecom: ['Network Issue', 'Billing', 'Customer Service', 'Coverage', 'Data Speed', 'SIM / Account', 'Other'],
@@ -85,11 +95,15 @@ function handleFileChange(e) {
 
 function validate() {
   errors.value = {}
-  if (!form.value.category) errors.value.category = 'Please select a category.'
-  if (!form.value.title.trim()) errors.value.title = 'Title is required.'
-  else if (form.value.title.trim().length < 5) errors.value.title = 'Title must be at least 5 characters.'
-  if (!form.value.description.trim()) errors.value.description = 'Description is required.'
-  else if (form.value.description.trim().length < 20) errors.value.description = 'Please provide more detail (min. 20 characters).'
+  // Category and title are optional in the simplified flow — the backend
+  // derives a title from the description when one isn't given, and staff can
+  // categorize later (see Phase 4). Only a short title, if the citizen chose
+  // to type one under "Add more details", is still validated.
+  if (form.value.title.trim() && form.value.title.trim().length < 5) {
+    errors.value.title = 'Title must be at least 5 characters, or leave it blank.'
+  }
+  if (!form.value.description.trim()) errors.value.description = 'Please describe your gunaso.'
+  else if (form.value.description.trim().length < 20) errors.value.description = 'Please provide a bit more detail (min. 20 characters).'
   if (!form.value.is_anonymous) {
     if (!form.value.submitter_name.trim()) errors.value.submitter_name = 'Name is required unless submitting anonymously.'
     if (!form.value.submitter_email.trim()) errors.value.submitter_email = 'Email is required unless submitting anonymously.'
@@ -107,7 +121,8 @@ async function handleSubmit() {
   try {
     const payload = {
       organization: selectedOrg.value.id,
-      ...form.value
+      ...form.value,
+      ...(branchCode.value ? { branch_code: branchCode.value } : {})
     }
     const result = await submissionStore.createSubmission(payload)
     submissionResult.value = result
@@ -130,6 +145,7 @@ function resetForm() {
   orgSearch.value = ''
   submissionResult.value = null
   copied.value = false
+  showMoreDetails.value = false
   form.value = {
     type: 'complaint', category: '', title: '', description: '',
     priority: 'medium', attachment: null,
@@ -166,6 +182,21 @@ onMounted(async () => {
   if (authStore.isAuthenticated && authStore.user) {
     form.value.submitter_name = authStore.user.name || ''
     form.value.submitter_email = authStore.user.email || ''
+  }
+
+  // Resolve the branch name for display only — best-effort, never blocks
+  // submission. If it fails to resolve here, the backend still validates
+  // branch_code on create and surfaces any error there.
+  if (selectedOrg.value && branchCode.value) {
+    try {
+      const { data } = await organizationsAPI.getBranches(selectedOrg.value.slug)
+      const branches = data.results || data
+      resolvedBranch.value = branches.find(
+        (b) => b.code?.toUpperCase() === branchCode.value.toUpperCase()
+      ) || null
+    } catch {
+      resolvedBranch.value = null
+    }
   }
 })
 </script>
@@ -291,7 +322,8 @@ onMounted(async () => {
                 Submitting feedback for
               </p>
               <p class="font-semibold text-gray-900 dark:text-white text-sm">{{ selectedOrg?.name }}</p>
-              <p class="text-xs text-gray-500 dark:text-gray-400">{{ selectedOrg?.category }}</p>
+              <p v-if="resolvedBranch" class="text-xs text-primary font-medium">{{ resolvedBranch.name }} branch</p>
+              <p v-else class="text-xs text-gray-500 dark:text-gray-400">{{ selectedOrg?.category }}</p>
             </div>
             <button v-if="!isLocked" @click="currentStep = 1"
               class="text-xs text-gray-400 hover:text-primary transition-colors font-medium shrink-0">
@@ -305,50 +337,30 @@ onMounted(async () => {
           </div>
 
           <div class="card p-6">
-            <h2 class="text-lg font-bold text-gray-900 dark:text-white mb-5">Complaint Details</h2>
-
             <form @submit.prevent="handleSubmit" class="space-y-5">
               <!-- Type -->
               <div>
-                <label class="label">Type</label>
                 <div class="grid grid-cols-3 gap-2">
-                  <label v-for="t in [{ value: 'complaint', label: '⚠️ Complaint' }, { value: 'feedback', label: '💬 Feedback' }, { value: 'suggestion', label: '💡 Suggestion' }]" :key="t.value"
-                    :class="['flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl border cursor-pointer transition-all text-xs font-semibold',
+                  <label v-for="t in [
+                    { value: 'complaint', label: 'गुनासो', sub: 'Complaint', icon: '⚠️' },
+                    { value: 'feedback', label: 'प्रतिक्रिया', sub: 'Feedback', icon: '💬' },
+                    { value: 'suggestion', label: 'सुझाव', sub: 'Suggestion', icon: '💡' },
+                  ]" :key="t.value"
+                    :class="['flex flex-col items-center justify-center gap-0.5 px-3 py-3 rounded-xl border cursor-pointer transition-all',
                       form.type === t.value ? 'border-primary bg-primary/5 text-primary dark:bg-primary/10' : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-gray-300 dark:hover:border-gray-500']">
                     <input type="radio" :value="t.value" v-model="form.type" class="sr-only" />
-                    {{ t.label }}
+                    <span class="text-sm font-bold">{{ t.icon }} {{ t.label }}</span>
+                    <span class="text-[11px] opacity-70">{{ t.sub }}</span>
                   </label>
                 </div>
               </div>
 
-              <!-- Category -->
+              <!-- The one required question -->
               <div data-error>
-                <label class="label">Category *</label>
-                <select v-model="form.category" :class="['input-base', errors.category ? 'border-red-400' : '']">
-                  <option value="">Select a category</option>
-                  <option v-for="cat in categories" :key="cat" :value="cat">{{ cat }}</option>
-                </select>
-                <p v-if="errors.category" class="field-error">{{ errors.category }}</p>
-              </div>
-
-              <!-- Title -->
-              <div>
-                <label class="label">Title *</label>
-                <input v-model="form.title" type="text" placeholder="Brief summary of your complaint"
-                  :class="['input-base', errors.title ? 'border-red-400' : '']"
-                  maxlength="150" />
-                <div class="flex justify-between mt-1">
-                  <p v-if="errors.title" class="field-error">{{ errors.title }}</p>
-                  <p class="text-xs text-gray-400 dark:text-gray-500 ml-auto">{{ form.title.length }}/150</p>
-                </div>
-              </div>
-
-              <!-- Description -->
-              <div>
-                <label class="label">Description *</label>
-                <textarea v-model="form.description" rows="5"
-                  placeholder="Describe your complaint in detail. Include dates, reference numbers, and what outcome you expect..."
-                  :class="['input-base resize-none', errors.description ? 'border-red-400' : '']"
+                <label class="label text-base">तपाईंको गुनासो के हो? <span class="font-normal text-gray-400">What is your gunaso?</span></label>
+                <textarea v-model="form.description" rows="6" autofocus
+                  placeholder="Tell us what happened, in your own words…"
+                  :class="['input-base resize-none text-[15px]', errors.description ? 'border-red-400' : '']"
                   maxlength="2000" />
                 <div class="flex justify-between mt-1">
                   <p v-if="errors.description" class="field-error">{{ errors.description }}</p>
@@ -356,32 +368,66 @@ onMounted(async () => {
                 </div>
               </div>
 
-              <!-- Priority -->
+              <!-- Add more details (collapsed by default — everything here is optional) -->
               <div>
-                <label class="label">Priority</label>
-                <div class="grid grid-cols-4 gap-2">
-                  <label v-for="p in [{ v: 'low', l: 'Low', c: 'text-slate-600' }, { v: 'medium', l: 'Medium', c: 'text-yellow-600' }, { v: 'high', l: 'High', c: 'text-orange-600' }, { v: 'urgent', l: 'Urgent', c: 'text-red-600' }]" :key="p.v"
-                    :class="['flex items-center justify-center py-2 rounded-xl border cursor-pointer transition-all text-xs font-bold',
-                      form.priority === p.v ? 'border-current bg-current/5 ' + p.c : 'border-gray-200 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-500']">
-                    <input type="radio" :value="p.v" v-model="form.priority" class="sr-only" />
-                    {{ p.l }}
-                  </label>
-                </div>
-              </div>
-
-              <!-- Attachment -->
-              <div>
-                <label class="label">Attachment (optional)</label>
-                <label class="flex items-center gap-3 p-3.5 border-2 border-dashed border-gray-200 dark:border-gray-600 rounded-xl cursor-pointer hover:border-primary/40 hover:bg-primary/2 dark:hover:border-primary/40 transition-colors">
-                  <svg class="w-5 h-5 text-gray-400 dark:text-gray-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
+                <button type="button" @click="showMoreDetails = !showMoreDetails"
+                  class="flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline">
+                  <svg :class="['w-4 h-4 transition-transform duration-200', showMoreDetails ? 'rotate-90' : '']"
+                    fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
                   </svg>
-                  <span class="text-sm text-gray-500 dark:text-gray-400">
-                    {{ attachmentLabel || 'Click to upload screenshot or document' }}
-                  </span>
-                  <input type="file" class="sr-only" accept="image/*,.pdf,.doc,.docx" @change="handleFileChange" />
-                </label>
-                <p class="text-xs text-gray-400 dark:text-gray-500 mt-1.5">Supported: JPG, PNG, PDF, DOC (max 5MB)</p>
+                  {{ showMoreDetails ? 'Hide extra details' : 'Add more details (optional)' }}
+                </button>
+
+                <Transition name="slide">
+                  <div v-if="showMoreDetails" class="space-y-4 mt-4">
+                    <!-- Title -->
+                    <div>
+                      <label class="label">Title (optional)</label>
+                      <input v-model="form.title" type="text" placeholder="We'll generate one from your gunaso if left blank"
+                        :class="['input-base', errors.title ? 'border-red-400' : '']"
+                        maxlength="150" />
+                      <p v-if="errors.title" class="field-error">{{ errors.title }}</p>
+                    </div>
+
+                    <!-- Category -->
+                    <div>
+                      <label class="label">Category (optional)</label>
+                      <select v-model="form.category" class="input-base">
+                        <option value="">Not sure — let the organization decide</option>
+                        <option v-for="cat in categories" :key="cat" :value="cat">{{ cat }}</option>
+                      </select>
+                    </div>
+
+                    <!-- Priority -->
+                    <div>
+                      <label class="label">Priority</label>
+                      <div class="grid grid-cols-4 gap-2">
+                        <label v-for="p in [{ v: 'low', l: 'Low', c: 'text-slate-600' }, { v: 'medium', l: 'Medium', c: 'text-yellow-600' }, { v: 'high', l: 'High', c: 'text-orange-600' }, { v: 'urgent', l: 'Urgent', c: 'text-red-600' }]" :key="p.v"
+                          :class="['flex items-center justify-center py-2 rounded-xl border cursor-pointer transition-all text-xs font-bold',
+                            form.priority === p.v ? 'border-current bg-current/5 ' + p.c : 'border-gray-200 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-500']">
+                          <input type="radio" :value="p.v" v-model="form.priority" class="sr-only" />
+                          {{ p.l }}
+                        </label>
+                      </div>
+                    </div>
+
+                    <!-- Attachment -->
+                    <div>
+                      <label class="label">Attachment (optional)</label>
+                      <label class="flex items-center gap-3 p-3.5 border-2 border-dashed border-gray-200 dark:border-gray-600 rounded-xl cursor-pointer hover:border-primary/40 hover:bg-primary/2 dark:hover:border-primary/40 transition-colors">
+                        <svg class="w-5 h-5 text-gray-400 dark:text-gray-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
+                        </svg>
+                        <span class="text-sm text-gray-500 dark:text-gray-400">
+                          {{ attachmentLabel || 'Click to upload screenshot or document' }}
+                        </span>
+                        <input type="file" class="sr-only" accept="image/*,.pdf,.doc,.docx" @change="handleFileChange" />
+                      </label>
+                      <p class="text-xs text-gray-400 dark:text-gray-500 mt-1.5">Supported: JPG, PNG, PDF, DOC (max 5MB)</p>
+                    </div>
+                  </div>
+                </Transition>
               </div>
 
               <!-- Anonymous toggle -->
@@ -454,7 +500,7 @@ onMounted(async () => {
 
           <h2 class="text-2xl font-extrabold text-gray-900 dark:text-white mb-2">Complaint Submitted!</h2>
           <p class="text-gray-500 dark:text-gray-400 text-sm mb-8">
-            Your complaint has been submitted to <span class="font-semibold text-gray-900 dark:text-white">{{ submissionResult.organization_name || selectedOrg?.name }}</span> and is now pending review.
+            Your complaint has been submitted to <span class="font-semibold text-gray-900 dark:text-white">{{ submissionResult.organization_name || selectedOrg?.name }}</span><span v-if="submissionResult.branch_name"> ({{ submissionResult.branch_name }} branch)</span> and is now pending review.
           </p>
 
           <!-- Reference number -->

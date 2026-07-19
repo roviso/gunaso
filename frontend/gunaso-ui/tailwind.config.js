@@ -69,6 +69,14 @@ export default {
         'draw-line': {
           from: { transform: 'scaleX(0)' },
           to: { transform: 'scaleX(1)' }
+        },
+        // Pop in, hold while drifting up slightly, fade out — one full cycle
+        // for a map "thinking bubble" showing a random recent gunaso excerpt.
+        'thought-bubble': {
+          '0%':   { opacity: '0', transform: 'scale(0.7) translateY(6px)' },
+          '12%':  { opacity: '1', transform: 'scale(1) translateY(0)' },
+          '82%':  { opacity: '1', transform: 'scale(1) translateY(-3px)' },
+          '100%': { opacity: '0', transform: 'scale(0.85) translateY(-12px)' }
         }
       },
       animation: {
@@ -77,7 +85,8 @@ export default {
         'scale-in': 'scale-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both',
         'pulse-dot': 'pulse-dot 2s ease-in-out infinite',
         'float-slow': 'float-slow 7s ease-in-out infinite',
-        'draw-line': 'draw-line 0.8s cubic-bezier(0.22, 1, 0.36, 1) both'
+        'draw-line': 'draw-line 0.8s cubic-bezier(0.22, 1, 0.36, 1) both',
+        'thought-bubble': 'thought-bubble 6s cubic-bezier(0.22, 1, 0.36, 1) both'
       },
       transitionTimingFunction: {
         spring: 'cubic-bezier(0.22, 1, 0.36, 1)'

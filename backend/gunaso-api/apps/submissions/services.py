@@ -4,9 +4,30 @@ import secrets
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from .models import InvalidStatusTransitionError, StatusUpdate, Submission
+from .models import Category, InvalidStatusTransitionError, StatusUpdate, Submission
 
 _REFERENCE_ATTEMPTS = 20
+_DERIVED_TITLE_MAX = 60
+
+
+def derive_title(description: str) -> str:
+    """Fallback title for the simplified "what is your gunaso?" submit flow,
+    where title is optional — the first sentence/clause of the description,
+    trimmed to a word boundary. Never raises; a blank description yields a
+    generic placeholder rather than an empty title (the model requires one).
+    """
+    text = ' '.join((description or '').split())
+    if not text:
+        return 'Gunaso'
+    # Prefer the first sentence-like clause over a hard character cut.
+    for sep in ('.', '।', '\n'):
+        idx = text.find(sep)
+        if 0 < idx <= _DERIVED_TITLE_MAX:
+            return text[:idx].strip()
+    if len(text) <= _DERIVED_TITLE_MAX:
+        return text
+    truncated = text[:_DERIVED_TITLE_MAX].rsplit(' ', 1)[0]
+    return f'{truncated}…' if truncated else f'{text[:_DERIVED_TITLE_MAX]}…'
 
 
 def generate_reference_number() -> str:
@@ -20,6 +41,23 @@ def generate_reference_number() -> str:
         if not Submission.objects.filter(reference_number=candidate).exists():
             return candidate
     return f'GUN-{year}-{secrets.token_hex(4).upper()}'
+
+
+def resolve_or_create_category(organization, name: str) -> Category:
+    """Look up a category by (case-insensitive) name, scoped to `organization`
+    then falling back to the global catalog, creating an org-scoped one if
+    neither exists. Shared by the citizen-facing create flow and AI
+    classification (apps/ai_insights) so both resolve categories identically.
+    """
+    name = name.strip()
+    category = Category.objects.filter(
+        name__iexact=name, organization=organization
+    ).first() or Category.objects.filter(
+        name__iexact=name, organization=None
+    ).first()
+    if category is None:
+        category = Category.objects.create(name=name, organization=organization)
+    return category
 
 
 def create_submission(validated_data: dict, citizen=None) -> Submission:
@@ -129,6 +167,39 @@ def organization_stats(organization) -> dict:
         organization=organization, is_active=True
     ).count()
 
+    by_branch = [
+        {'id': row['branch__id'], 'name': row['branch__name'], 'count': row['count']}
+        for row in (
+            submissions.filter(branch__isnull=False)
+            .values('branch__id', 'branch__name')
+            .annotate(count=Count('id'))
+            .order_by('-count')
+        )
+    ]
+
+    # "What's actually wrong" panel: top categories by volume, each with a
+    # few example reference numbers to click into. Purely a DB aggregation
+    # over already-assigned categories (manual or AI, see apps.ai_insights) —
+    # no live LLM call on every dashboard load.
+    by_category = [
+        {
+            'id': row['category__id'],
+            'name': row['category__name'],
+            'count': row['count'],
+            'examples': list(
+                submissions.filter(category_id=row['category__id'])
+                .order_by('-created_at')
+                .values_list('reference_number', flat=True)[:3]
+            ),
+        }
+        for row in (
+            submissions.filter(category__isnull=False)
+            .values('category__id', 'category__name')
+            .annotate(count=Count('id'))
+            .order_by('-count')[:10]
+        )
+    ]
+
     active_statuses = {'submitted', 'acknowledged', 'in_review', 'escalated'}
     unassigned_count = submissions.filter(
         assigned_to__isnull=True, status__in=active_statuses
@@ -161,4 +232,6 @@ def organization_stats(organization) -> dict:
         'staff_count': staff_count,
         'unassigned_count': unassigned_count,
         'trend': trend,
+        'by_branch': by_branch,
+        'by_category': by_category,
     }

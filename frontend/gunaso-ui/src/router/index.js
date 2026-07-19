@@ -71,6 +71,9 @@ const routes = [
       { path: 'submissions', name: 'OrgSubmissions', component: () => import('@/views/OrgSubmissionsPage.vue') },
       { path: 'staff', name: 'OrgStaff', component: () => import('@/views/OrgStaffPage.vue') },
       { path: 'roles', name: 'OrgRoles', component: () => import('@/views/OrgRolesPage.vue') },
+      { path: 'branches', name: 'OrgBranches', component: () => import('@/views/OrgBranchesPage.vue') },
+      { path: 'reports', name: 'OrgAIReports', component: () => import('@/views/OrgAIReportsPage.vue') },
+      { path: 'map', name: 'OrgMap', component: () => import('@/views/OrgMapPage.vue') },
       { path: 'settings', name: 'OrgSettings', component: () => import('@/views/OrgSettingsPage.vue') },
       { path: 'qrcode', name: 'OrgQRCode', component: () => import('@/views/OrgQRCodePage.vue') },
     ]

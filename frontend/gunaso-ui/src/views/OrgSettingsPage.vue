@@ -1,11 +1,10 @@
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import L from 'leaflet'
-import 'leaflet/dist/leaflet.css'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useOrganizationStore } from '@/stores/organization'
 import { useUIStore } from '@/stores/ui'
 import { apiErrorMessage } from '@/api/index'
+import LocationPicker from '@/components/LocationPicker.vue'
 
 const authStore = useAuthStore()
 const orgStore = useOrganizationStore()
@@ -29,68 +28,6 @@ const fileInputRef = ref(null)
 
 const logoPreview = computed(() => logoObjectUrl.value || orgStore.currentOrg?.logo || null)
 
-// ── Location picker ──────────────────────────────────────────────────────
-const NEPAL_CENTER = [28.3949, 84.124]
-const mapEl = ref(null)
-let map = null
-let marker = null
-
-const pinIcon = L.divIcon({
-  className: '',
-  html: `<svg width="30" height="42" viewBox="0 0 30 42" xmlns="http://www.w3.org/2000/svg">
-    <path d="M15 0C6.7 0 0 6.7 0 15c0 11.2 15 27 15 27s15-15.8 15-27C30 6.7 23.3 0 15 0z" fill="#E63946"/>
-    <circle cx="15" cy="15" r="6" fill="white"/>
-  </svg>`,
-  iconSize: [30, 42],
-  iconAnchor: [15, 42],
-})
-
-function placeMarker(lat, lng) {
-  if (!map) return
-  if (marker) {
-    marker.setLatLng([lat, lng])
-  } else {
-    marker = L.marker([lat, lng], { icon: pinIcon }).addTo(map)
-  }
-}
-
-function setLocation(lat, lng) {
-  form.value.latitude = Number(lat.toFixed(6))
-  form.value.longitude = Number(lng.toFixed(6))
-  placeMarker(lat, lng)
-}
-
-function clearLocation() {
-  form.value.latitude = null
-  form.value.longitude = null
-  if (marker) {
-    marker.remove()
-    marker = null
-  }
-}
-
-function syncMarkerFromInputs() {
-  const lat = Number(form.value.latitude)
-  const lng = Number(form.value.longitude)
-  if (Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
-    placeMarker(lat, lng)
-    map?.setView([lat, lng], Math.max(map.getZoom(), 12))
-  }
-}
-
-function initMap() {
-  if (!mapEl.value || map) return
-  const hasLocation = form.value.latitude != null && form.value.longitude != null
-  const center = hasLocation ? [Number(form.value.latitude), Number(form.value.longitude)] : NEPAL_CENTER
-  map = L.map(mapEl.value).setView(center, hasLocation ? 13 : 6)
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    maxZoom: 19,
-  }).addTo(map)
-  if (hasLocation) placeMarker(center[0], center[1])
-  map.on('click', (e) => setLocation(e.latlng.lat, e.latlng.lng))
-}
-
 function populateForm(org) {
   if (!org) return
   form.value = {
@@ -112,17 +49,10 @@ onMounted(async () => {
     await orgStore.fetchOrgBySlug(authStore.accessibleOrgSlug)
   }
   populateForm(orgStore.currentOrg)
-  await nextTick()
-  if (canEdit.value) initMap()
 })
 
 onBeforeUnmount(() => {
   if (logoObjectUrl.value) URL.revokeObjectURL(logoObjectUrl.value)
-  if (map) {
-    map.remove()
-    map = null
-    marker = null
-  }
 })
 
 function handleLogoChange(e) {
@@ -280,24 +210,8 @@ async function handleSubmit() {
           <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 mb-3">
             Click the map to place your organization — it will then appear on the public organizations map.
           </p>
-          <div ref="mapEl" class="h-64 rounded-xl overflow-hidden border border-gray-200 dark:border-gray-600 z-0"></div>
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3 items-end">
-            <div>
-              <label class="label">Latitude</label>
-              <input v-model.number="form.latitude" type="number" step="any" min="-90" max="90"
-                @change="syncMarkerFromInputs" class="input-base" placeholder="27.7172" />
-            </div>
-            <div>
-              <label class="label">Longitude</label>
-              <input v-model.number="form.longitude" type="number" step="any" min="-180" max="180"
-                @change="syncMarkerFromInputs" class="input-base" placeholder="85.3240" />
-            </div>
-            <button type="button" @click="clearLocation"
-              :disabled="form.latitude == null && form.longitude == null"
-              class="btn-secondary !py-3 text-sm disabled:opacity-50 disabled:cursor-not-allowed">
-              Clear location
-            </button>
-          </div>
+          <LocationPicker :model-value="{ latitude: form.latitude, longitude: form.longitude }"
+            @update:model-value="(loc) => { form.latitude = loc.latitude; form.longitude = loc.longitude }" />
           <p v-if="fieldErrors.location" class="field-error">{{ fieldErrors.location }}</p>
         </div>
 

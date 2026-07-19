@@ -47,6 +47,11 @@ STAFF_PRIVILEGES = [
         'label': 'Edit organization profile',
         'group': 'organization',
     },
+    {
+        'key': 'manage_branches',
+        'label': 'Add, edit, and remove branches',
+        'group': 'organization',
+    },
 ]
 
 STAFF_PRIVILEGE_KEYS = {privilege['key'] for privilege in STAFF_PRIVILEGES}

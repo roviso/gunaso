@@ -69,9 +69,13 @@ gunaso/
 │   │   │   ├── validators.py      # Attachment validation (size/ext/magic bytes)
 │   │   │   ├── org_urls.py        # /api/v1/org/* convenience endpoints
 │   │   │   └── management/commands/seed_data.py
-│   │   └── platform_admin/        # Superadmin dashboard: PlatformAuditLog + /api/v1/admin/*
-│   │       ├── permissions.py     # IsSuperAdmin (gates on User.is_superuser)
-│   │       └── services.py        # verify/activate org, block/promote user, platform_overview()
+│   │   ├── platform_admin/        # Superadmin dashboard: PlatformAuditLog + /api/v1/admin/*
+│   │   │   ├── permissions.py     # IsSuperAdmin (gates on User.is_superuser)
+│   │   │   └── services.py        # verify/activate org, block/promote user, platform_overview()
+│   │   └── ai_insights/           # AI classification/sujhav/reports — SubmissionInsight
+│   │       ├── client.py          # Anthropic SDK boundary (is_ai_enabled, classify_submission)
+│   │       ├── services.py        # classify_and_store() — auto-apply guardrail
+│   │       └── management/commands/classify_submissions.py  # batch backfill
 │   ├── conftest.py                # Shared pytest fixtures
 │   ├── pytest.ini
 │   ├── requirements.txt           # Pinned production deps
@@ -118,6 +122,15 @@ except the org's own admin and platform staff),
 `is_verified` (platform admin sets via Django admin; only verified orgs appear publicly),
 `is_active`, `admin` (FK → User; creating an org upgrades the creator to `org_admin`).
 
+### Branch (`apps/organizations`)
+A physical location of an organization (a branch office, ward desk, etc.).
+`organization` FK, `name` (unique per org), `code` (8-char random, non-enumerable —
+same philosophy as `Submission.reference_number`; embedded in that branch's QR
+target URL as `?branch=<code>`), `address`, `latitude`/`longitude` (both required
+for the branch to appear on any map), `is_active`. A citizen who scans a branch's
+QR code has that branch recorded on their `Submission` (see below), giving the
+organization per-branch traceability and stats in the dashboard.
+
 ### OrganizationRating (`apps/organizations`)
 A citizen's 1–5 star rating of an organization — score only, no review text.
 One row per `(organization, user)`; re-rating upserts (see
@@ -130,15 +143,49 @@ Unique per `(name, organization)`. Auto-created on first use by submission creat
 
 ### Submission (`apps/submissions`)
 The core entity. Key fields: `reference_number` (`GUN-YYYY-NNNNN`, random, unique,
-non-enumerable), `organization`, `category`, `submission_type`
-(`complaint|feedback|suggestion`), `title`, `description`, `attachment` (validated),
-`status`, `priority` (`low|medium|high|urgent`), `is_anonymous`,
-`citizen` (FK, null for guests), `citizen_name/email/phone` (blank when anonymous),
-`created_at`, `updated_at`, `resolved_at`.
+non-enumerable), `organization`, `branch` (FK, nullable — set when the citizen
+scanned a branch-specific QR code; `SET_NULL` on branch deletion), `category`,
+`submission_type` (`complaint|feedback|suggestion`), `title`, `description`,
+`attachment` (validated), `status`, `priority` (`low|medium|high|urgent`),
+`is_anonymous`, `citizen` (FK, null for guests), `citizen_name/email/phone`
+(blank when anonymous), `created_at`, `updated_at`, `resolved_at`.
 
 **API field mapping:** the API exposes `type` (↔ `submission_type`) and
 `submitter_name/email/phone` (↔ `citizen_*`). `category` is written as a plain name
-string and resolved/created server-side.
+string and resolved/created server-side. `branch` is written as `branch_code` (the
+non-enumerable code from the scanned QR URL, org-scoped and resolved server-side —
+never a raw `Branch` id) and read back as `branch_name`.
+
+**Simplified submit flow:** `title` and `category` are both optional on create —
+the public submit form only requires `description` (min 20 chars) plus contact
+info unless anonymous. When `title` is omitted or blank, `apps/submissions/services.py::derive_title()`
+generates one from the description (first sentence/clause, or the first ~60
+chars trimmed to a word boundary). An explicitly provided title is still
+validated (min 5 chars) and kept verbatim.
+
+### SubmissionInsight (`apps/ai_insights`)
+AI-generated classification for one submission — a **suggestion**, not an
+edit. OneToOne with `Submission` (`related_name='ai_insight'`); re-classifying
+replaces the row (`update_or_create`). Fields: `suggested_category`,
+`confidence` (0–1), `sentiment` (`positive|neutral|negative`),
+`suggested_title`, `applied` (whether the suggestion was auto-applied to
+`Submission.category`). See §9 for the auto-apply guardrail and the
+never-leak-identity rule for the prompt sent to Claude.
+
+### AISuggestion (`apps/ai_insights`)
+AI-generated "sujhav" (सुझाव) — a suggested resolution/response for one
+submission, bilingual (`suggestion_nepali` + `suggestion_english`, both full
+independent versions, not a translation pair). OneToOne with `Submission`
+(`related_name='ai_suggestion'`); regenerating replaces the row.
+
+### AIReport (`apps/ai_insights`)
+A persisted, browsable AI-generated report summarizing an organization's
+submissions over a `[date_from, date_to]` range: bilingual executive summary,
+`themes` (JSON list of `{name, count, summary}`), `sentiment_overview`, and
+`recommendations` (JSON list of strings). Generated on demand and kept so
+staff can revisit past reports without re-generating (and re-billing). Capped
+at the most recent `REPORT_SUBMISSION_LIMIT` (150) submissions in the range
+regardless of how large the range is (`apps/ai_insights/services.py`).
 
 ### StatusUpdate (`apps/submissions`)
 **Append-only audit log** — never updated or deleted (enforced in Django admin too).
@@ -201,8 +248,11 @@ All endpoints are under `/api/v1/`. OpenAPI docs: `/api/v1/schema/swagger-ui/`.
 | `GET /organizations/{slug}/` | — | Public org profile |
 | `PATCH /organizations/{slug}/settings/` | org admin / `manage_org_profile` | Edit org profile fields, location, `show_rating` |
 | `GET/PUT/DELETE /organizations/{slug}/rating/` | Bearer | Current user's own 1–5 rating (PUT upserts) |
-| `GET /organizations/{slug}/submissions/` | org admin | Org's submissions |
-| `GET /organizations/{slug}/stats/` | org admin | Aggregate stats |
+| `GET /organizations/{slug}/submissions/` | org admin | Org's submissions (filterable by `?branch=`) |
+| `GET /organizations/{slug}/stats/` | org admin | Aggregate stats (incl. `by_branch` and `by_category` breakdowns) |
+| `GET /organizations/{slug}/branches/` | — (public: active only) / org admin sees all | List branches; `POST` requires `manage_branches` |
+| `PATCH/DELETE /organizations/{slug}/branches/{id}/` | `manage_branches` | Edit/remove a branch |
+| `GET /organizations/{slug}/branches/{id}/qrcode/` | — | PNG/base64 QR whose target URL carries `?branch=<code>` |
 | `GET /categories/` | — | Categories (`?org=`, `?org_slug=`) |
 | `POST /submissions/` | — (throttled) | Create submission (guests allowed) |
 | `GET /submissions/my/` | Bearer | Own submissions |
@@ -210,7 +260,12 @@ All endpoints are under `/api/v1/`. OpenAPI docs: `/api/v1/schema/swagger-ui/`.
 | `GET /submissions/{ref}/` | owner/org admin/staff | Full detail |
 | `PATCH /submissions/{ref}/status/` | org admin | Validated status transition |
 | `GET/POST /submissions/{ref}/updates/` | participants / org admin | Audit trail / staff note |
+| `PATCH /submissions/{ref}/category/` | `manage_submissions` | Manual categorization |
+| `POST /submissions/{ref}/ai-classify/` | `manage_submissions` (throttled) | AI classification (apps.ai_insights); 503 if AI unconfigured, 502 on AI failure |
+| `POST /submissions/{ref}/ai-suggestion/` | `manage_submissions` (throttled) | AI सुझाव — bilingual resolution suggestion; same 503/502 contract |
 | `GET /org/submissions/`, `GET /org/stats/` | org admin | Dashboard convenience endpoints |
+| `GET/POST /org/ai-reports/` | `view_stats` (throttled) | List / generate bilingual period reports (`{date_from, date_to}`) |
+| `GET /org/map-feed/` | `view_submissions` | Branches with coordinates + a rolling window of recent branch-linked submission excerpts, for the animated branch map |
 | `GET /admin/overview/` | superadmin | Platform-wide analytics (orgs/users/submissions totals, 30-day trend) |
 | `GET /admin/organizations/` | superadmin | Every organization, verified or not (paginated, `?search=`, `?is_verified=`, `?is_active=`) |
 | `PATCH /admin/organizations/{slug}/` | superadmin | Verify/unverify and/or activate/deactivate an organization |
@@ -338,6 +393,12 @@ the last remaining superadmin cannot be demoted.
   no need to wait out the access token's lifetime) and blacklists every outstanding refresh
   token for that user as defense in depth.
 - Unhandled exceptions return an opaque 500 envelope; details go to server logs only.
+- **AI prompts never carry submitter identity.** `apps/ai_insights/client.py::_build_prompt`
+  sends only `submission_type`/`title`/`description` (plus the org's existing category
+  names) to the Anthropic API — never `citizen_name`/`citizen_email`/`citizen_phone`,
+  regardless of `is_anonymous`. This is a hard rule, not a redaction step applied
+  after the fact — the payload builder simply never reads those fields. Any new
+  AI feature (Phase 5's sujhav/reports) must follow the same rule.
 
 ---
 
@@ -346,7 +407,7 @@ the last remaining superadmin cannot be demoted.
 ```bash
 cd backend/gunaso-api
 .venv/Scripts/activate          # Windows (source .venv/bin/activate on Unix)
-pytest                          # runs 37+ tests
+pytest                          # runs 300+ tests
 ```
 
 - pytest + pytest-django; fixtures in `conftest.py`. AAA structure.
@@ -362,11 +423,13 @@ pytest                          # runs 37+ tests
 
 Root `.env` (Docker stack — see `.env.example`): `DEBUG`, `SECRET_KEY`, `JWT_SIGNING_KEY`,
 `ALLOWED_HOSTS`, `POSTGRES_DB/USER/PASSWORD`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`,
-`SECURE_SSL_REDIRECT`, `MAX_ATTACHMENT_SIZE_MB`, optional `EMAIL_*`.
+`SECURE_SSL_REDIRECT`, `MAX_ATTACHMENT_SIZE_MB`, `ANTHROPIC_API_KEY` (optional — AI features
+run disabled without it), optional `EMAIL_*`.
 
 Backend-only extras: `DATABASE_URL`, `REDIS_URL`, `JWT_*_LIFETIME_*`, `THROTTLE_*`,
 `LOG_LEVEL`, `DB_CONN_MAX_AGE`, `STAFF_INVITE_EXPIRY_DAYS` (default 7 — how long a staff
-invite link stays valid; see `apps/organizations/services.py`).
+invite link stays valid; see `apps/organizations/services.py`), `AI_CLASSIFICATION_MODEL`
+(default `claude-opus-4-8`).
 
 Frontend: `VITE_API_BASE_URL` (keep it `/api/v1`).
 

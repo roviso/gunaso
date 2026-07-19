@@ -3,10 +3,49 @@ from django.contrib.auth.password_validation import validate_password
 from django.utils.text import slugify
 from rest_framework import serializers
 
-from .models import Organization, OrganizationStaff, Stakeholder, StaffRole
+from .models import Branch, Organization, OrganizationStaff, Stakeholder, StaffRole
 from .privileges import STAFF_PRIVILEGE_KEYS
+from .services import generate_branch_code
 
 User = get_user_model()
+
+
+class BranchSerializer(serializers.ModelSerializer):
+    """`organization` is never accepted from the client — it comes from
+    `context['organization']`, which the view resolves (and permission-checks)
+    from the URL slug, mirroring StaffRoleSerializer."""
+
+    submission_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Branch
+        fields = [
+            'id', 'organization', 'name', 'code', 'address',
+            'latitude', 'longitude', 'is_active', 'submission_count',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'organization', 'code', 'created_at', 'updated_at']
+
+    def get_submission_count(self, obj) -> int:
+        count = getattr(obj, 'submission_count_annotated', None)
+        return count if count is not None else obj.submissions.count()
+
+    def validate_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError('This field may not be blank.')
+        organization = self.context['organization']
+        qs = Branch.objects.filter(organization=organization, name__iexact=value)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError('A branch with this name already exists for this organization.')
+        return value
+
+    def create(self, validated_data):
+        validated_data['organization'] = self.context['organization']
+        validated_data['code'] = generate_branch_code()
+        return Branch.objects.create(**validated_data)
 
 
 class OrganizationSerializer(serializers.ModelSerializer):

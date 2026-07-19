@@ -21,7 +21,7 @@ const uiStore = useUIStore()
 
 const filters = ref({
   status: '', type: '', priority: '', search: '',
-  assignee: '', dateFrom: '', dateTo: '',
+  assignee: '', branch: '', category: '', dateFrom: '', dateTo: '',
 })
 
 // Seed filters from the URL so dashboard cards can deep-link into filtered views
@@ -62,6 +62,8 @@ const filtered = computed(() => {
     if (f.priority && s.priority !== f.priority) return false
     if (f.assignee === 'unassigned' && s.assigned_to) return false
     if (f.assignee && f.assignee !== 'unassigned' && String(s.assigned_to?.id) !== f.assignee) return false
+    if (f.branch && String(s.branch || '') !== f.branch) return false
+    if (f.category && s.category !== f.category) return false
     if (f.search) {
       const q = f.search.toLowerCase()
       if (
@@ -77,7 +79,7 @@ const filtered = computed(() => {
 })
 
 function clearFilters() {
-  filters.value = { status: '', type: '', priority: '', search: '', assignee: '', dateFrom: '', dateTo: '' }
+  filters.value = { status: '', type: '', priority: '', search: '', assignee: '', branch: '', category: '', dateFrom: '', dateTo: '' }
 }
 
 function toggleSelect(id) {
@@ -109,13 +111,14 @@ async function handleUpdated(updated) {
 function exportCSV() {
   const selected = filtered.value.filter((s) => selectedIds.value.has(s.id))
   const rows = [
-    ['Reference', 'Title', 'Type', 'Priority', 'Status', 'Submitter', 'Assigned To', 'Date'],
+    ['Reference', 'Title', 'Type', 'Priority', 'Status', 'Branch', 'Submitter', 'Assigned To', 'Date'],
     ...selected.map((s) => [
       s.reference_number,
       s.title,
       s.type,
       s.priority,
       s.status,
+      s.branch_name || '',
       s.is_anonymous ? 'Anonymous' : (s.submitter_name || ''),
       s.assigned_to?.user_name || '',
       s.created_at ? new Date(s.created_at).toLocaleDateString('en-US') : '',
@@ -163,7 +166,10 @@ onMounted(async () => {
   }
 
   const slug = orgStore.currentOrg?.slug
-  if (slug) await orgStore.fetchStaff(slug)
+  if (slug) {
+    await orgStore.fetchStaff(slug)
+    await orgStore.fetchBranches(slug)
+  }
 })
 </script>
 
@@ -177,6 +183,8 @@ onMounted(async () => {
       :show-assignee="true"
       :show-date-range="true"
       :staff-list="orgStore.staff"
+      :show-branch="orgStore.branches.length > 0"
+      :branch-list="orgStore.branches"
       :count="filtered.length"
       @clear="clearFilters" />
 
@@ -200,13 +208,14 @@ onMounted(async () => {
               <th class="px-4 py-3 text-left">Type</th>
               <th class="px-4 py-3 text-left">Priority</th>
               <th class="px-4 py-3 text-left">Status</th>
+              <th class="px-4 py-3 text-left">Branch</th>
               <th class="px-4 py-3 text-left">Assigned</th>
               <th class="px-4 py-3 text-left">Date</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-100 dark:divide-gray-700/50">
             <tr v-if="!filtered.length">
-              <td colspan="8" class="px-4 py-12 text-center text-gray-400 dark:text-gray-500 text-sm">
+              <td colspan="9" class="px-4 py-12 text-center text-gray-400 dark:text-gray-500 text-sm">
                 No submissions match the current filters.
               </td>
             </tr>
@@ -245,6 +254,9 @@ onMounted(async () => {
               </td>
               <td class="px-4 py-3 whitespace-nowrap">
                 <StatusBadge :status="sub.status" />
+              </td>
+              <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">
+                {{ sub.branch_name || '—' }}
               </td>
               <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">
                 {{ sub.assigned_to?.user_name || '—' }}

@@ -1,5 +1,13 @@
 from django.contrib import admin
-from .models import Organization, OrganizationRating, OrganizationStaff, Stakeholder, StaffInvite, StaffRole
+from .models import Branch, Organization, OrganizationRating, OrganizationStaff, Stakeholder, StaffInvite, StaffRole
+
+
+@admin.register(Branch)
+class BranchAdmin(admin.ModelAdmin):
+    list_display = ['name', 'organization', 'code', 'is_active', 'created_at']
+    list_filter = ['organization', 'is_active']
+    search_fields = ['name', 'code', 'organization__name']
+    readonly_fields = ['code']
 
 
 @admin.register(Organization)

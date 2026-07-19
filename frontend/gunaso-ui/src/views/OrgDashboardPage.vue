@@ -346,6 +346,31 @@ onMounted(loadData)
         </div>
       </div>
 
+      <!-- What's actually wrong: top categories by volume (manual + AI-assigned) -->
+      <div v-if="s.by_category?.length" class="card p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-sm font-bold text-gray-800 dark:text-white">What's Actually Wrong</h2>
+          <span class="text-xs text-gray-400 dark:text-gray-500">By category, most common first</span>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <RouterLink v-for="cat in s.by_category" :key="cat.id"
+            :to="{ path: '/org/submissions', query: { category: cat.name } }"
+            class="flex items-center justify-between gap-3 p-3.5 rounded-xl border border-gray-100 dark:border-gray-700 hover:border-primary/40 hover:bg-primary/5 dark:hover:bg-primary/10 transition-colors group">
+            <div class="min-w-0">
+              <p class="text-sm font-semibold text-gray-900 dark:text-white truncate group-hover:text-primary transition-colors">
+                {{ cat.name }}
+              </p>
+              <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 font-mono truncate">
+                {{ cat.examples.join(', ') }}
+              </p>
+            </div>
+            <span class="shrink-0 px-2.5 py-1 rounded-full text-xs font-bold bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300 group-hover:bg-primary/10 group-hover:text-primary transition-colors">
+              {{ cat.count }}
+            </span>
+          </RouterLink>
+        </div>
+      </div>
+
       <!-- Recent activity -->
       <div class="card p-5">
         <div class="flex items-center justify-between mb-4">

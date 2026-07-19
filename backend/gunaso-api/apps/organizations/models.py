@@ -44,6 +44,40 @@ class Organization(models.Model):
         return self.name
 
 
+class Branch(models.Model):
+    """A physical location of an organization — a branch office, ward desk, etc.
+
+    `code` is a random, non-enumerable identifier (same philosophy as
+    `Submission.reference_number`) embedded in that branch's QR code URL, so
+    scanning one branch's QR can never be used to guess another's. Both
+    `latitude`/`longitude` must be set for the branch to appear on any map.
+    """
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='branches')
+    name = models.CharField(max_length=200)
+    code = models.CharField(max_length=20, unique=True, db_index=True)
+    address = models.CharField(max_length=255, blank=True)
+    latitude = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True,
+        validators=[MinValueValidator(Decimal('-90')), MaxValueValidator(Decimal('90'))],
+    )
+    longitude = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True,
+        validators=[MinValueValidator(Decimal('-180')), MaxValueValidator(Decimal('180'))],
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('organization', 'name')
+        ordering = ['organization', 'name']
+        verbose_name_plural = 'branches'
+
+    def __str__(self):
+        return f'{self.name} @ {self.organization.name}'
+
+
 class Stakeholder(models.Model):
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='stakeholders')
     user = models.ForeignKey(User, on_delete=models.CASCADE)

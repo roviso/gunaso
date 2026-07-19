@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from .models import Category, StatusUpdate, Submission
-from .services import create_submission
+from .services import create_submission, derive_title, resolve_or_create_category
 from .validators import validate_attachment
 
 
@@ -63,19 +63,30 @@ class SubmissionSerializer(serializers.ModelSerializer):
     attachment = serializers.FileField(
         required=False, allow_null=True, validators=[validate_attachment]
     )
+    # Write-only: the branch's non-enumerable `code` from the scanned QR URL
+    # (?branch=<code>), never a raw Branch id — resolved and org-scoped in
+    # `create()`. Blank/omitted means an org-wide submission (branch=None).
+    branch_code = serializers.CharField(
+        max_length=20, required=False, allow_blank=True, write_only=True
+    )
+    branch = serializers.PrimaryKeyRelatedField(read_only=True)
+    branch_name = serializers.CharField(source='branch.name', read_only=True, default=None)
     organization_name = serializers.CharField(source='organization.name', read_only=True)
     org_slug = serializers.CharField(source='organization.slug', read_only=True)
     timeline = TimelineEntrySerializer(source='updates', many=True, read_only=True)
     assigned_to = serializers.SerializerMethodField()
+    ai_insight = serializers.SerializerMethodField()
+    ai_suggestion = serializers.SerializerMethodField()
 
     class Meta:
         model = Submission
         fields = [
             'id', 'reference_number', 'organization', 'organization_name', 'org_slug',
+            'branch', 'branch_code', 'branch_name',
             'type', 'category', 'title', 'description', 'attachment',
             'status', 'priority', 'is_anonymous', 'is_public', 'assigned_to',
             'submitter_name', 'submitter_email', 'submitter_phone',
-            'created_at', 'updated_at', 'resolved_at', 'timeline',
+            'created_at', 'updated_at', 'resolved_at', 'timeline', 'ai_insight', 'ai_suggestion',
         ]
         read_only_fields = [
             'id', 'reference_number', 'status', 'created_at', 'updated_at', 'resolved_at',
@@ -84,8 +95,40 @@ class SubmissionSerializer(serializers.ModelSerializer):
             'is_public',
         ]
         extra_kwargs = {
-            'title': {'min_length': 5},
+            # Title is optional in the simplified "what is your gunaso?" submit
+            # flow — create() derives one from the description when omitted.
+            # Blank values bypass min_length (see DRF CharField.validate_empty_values),
+            # so a provided-but-short title is still rejected.
+            'title': {'required': False, 'allow_blank': True, 'min_length': 5},
             'description': {'min_length': 20},
+        }
+
+    def get_ai_insight(self, obj):
+        # ai_insights depends on submissions, not the reverse — imported
+        # locally to avoid a module-load-order dependency between the apps.
+        from apps.ai_insights.models import SubmissionInsight
+        try:
+            insight = obj.ai_insight
+        except SubmissionInsight.DoesNotExist:
+            return None
+        return {
+            'suggested_category': insight.suggested_category,
+            'confidence': insight.confidence,
+            'sentiment': insight.sentiment,
+            'suggested_title': insight.suggested_title,
+            'applied': insight.applied,
+        }
+
+    def get_ai_suggestion(self, obj):
+        from apps.ai_insights.models import AISuggestion
+        try:
+            suggestion = obj.ai_suggestion
+        except AISuggestion.DoesNotExist:
+            return None
+        return {
+            'suggestion_nepali': suggestion.suggestion_nepali,
+            'suggestion_english': suggestion.suggestion_english,
+            'updated_at': suggestion.updated_at,
         }
 
     def get_assigned_to(self, obj):
@@ -114,16 +157,24 @@ class SubmissionSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         organization = validated_data['organization']
 
+        if not (validated_data.get('title') or '').strip():
+            validated_data['title'] = derive_title(validated_data.get('description', ''))
+
+        branch_code = (validated_data.pop('branch_code', '') or '').strip().upper()
+        if branch_code:
+            from apps.organizations.models import Branch
+            branch = Branch.objects.filter(
+                organization=organization, code=branch_code, is_active=True,
+            ).first()
+            if branch is None:
+                raise serializers.ValidationError(
+                    {'branch_code': 'Unknown or inactive branch for this organization.'}
+                )
+            validated_data['branch'] = branch
+
         category_name = (validated_data.pop('category', '') or '').strip()
         if category_name:
-            category = Category.objects.filter(
-                name__iexact=category_name, organization=organization
-            ).first() or Category.objects.filter(
-                name__iexact=category_name, organization=None
-            ).first()
-            if category is None:
-                category = Category.objects.create(name=category_name, organization=organization)
-            validated_data['category'] = category
+            validated_data['category'] = resolve_or_create_category(organization, category_name)
 
         citizen = None
         if request and request.user.is_authenticated and not validated_data.get('is_anonymous'):

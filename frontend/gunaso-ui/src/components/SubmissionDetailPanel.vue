@@ -33,6 +33,13 @@ const addingNote = ref(false)
 const assigning = ref(false)
 const togglingVisibility = ref(false)
 
+const categoryInput = ref('')
+const savingCategory = ref(false)
+const classifying = ref(false)
+const classifyError = ref('')
+const generatingSujhav = ref(false)
+const sujhavError = ref('')
+
 const VALID_TRANSITIONS = {
   submitted:    ['acknowledged', 'in_review', 'rejected', 'escalated'],
   acknowledged: ['in_review', 'rejected', 'escalated'],
@@ -58,6 +65,9 @@ watch(() => props.submission, (sub) => {
     statusUpdate.value = { status: '', note: '' }
     noteText.value = ''
     assigneeId.value = sub.assigned_to_id ? String(sub.assigned_to_id) : ''
+    categoryInput.value = sub.category || ''
+    classifyError.value = ''
+    sujhavError.value = ''
   }
 })
 
@@ -133,6 +143,65 @@ async function togglePublic() {
   }
 }
 
+async function submitCategory() {
+  if (!categoryInput.value.trim() || savingCategory.value) return
+  savingCategory.value = true
+  try {
+    const updated = await submissionStore.updateCategory(props.submission.reference_number, categoryInput.value.trim())
+    uiStore.showSuccess('Category updated.')
+    emit('updated', updated)
+  } catch (err) {
+    uiStore.showError(apiErrorMessage(err, 'Failed to update category.'))
+  } finally {
+    savingCategory.value = false
+  }
+}
+
+async function runAIClassify() {
+  if (classifying.value) return
+  classifying.value = true
+  classifyError.value = ''
+  try {
+    const result = await submissionStore.aiClassify(props.submission.reference_number)
+    categoryInput.value = result.submission.category || categoryInput.value
+    uiStore.showSuccess(
+      result.applied ? 'AI classified and applied a category.' : 'AI suggestion ready — review and apply below.'
+    )
+    emit('updated', result.submission)
+  } catch (err) {
+    classifyError.value = apiErrorMessage(err, 'AI classification is unavailable right now.')
+  } finally {
+    classifying.value = false
+  }
+}
+
+async function applyAISuggestion() {
+  if (!props.submission?.ai_insight?.suggested_category) return
+  categoryInput.value = props.submission.ai_insight.suggested_category
+  await submitCategory()
+}
+
+async function runGenerateSujhav() {
+  if (generatingSujhav.value) return
+  generatingSujhav.value = true
+  sujhavError.value = ''
+  try {
+    const updated = await submissionStore.generateSujhav(props.submission.reference_number)
+    uiStore.showSuccess('AI सुझाव generated.')
+    emit('updated', updated)
+  } catch (err) {
+    sujhavError.value = apiErrorMessage(err, 'AI suggestion is unavailable right now.')
+  } finally {
+    generatingSujhav.value = false
+  }
+}
+
+const sentimentMeta = {
+  positive: { label: 'Positive', class: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' },
+  neutral: { label: 'Neutral', class: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300' },
+  negative: { label: 'Negative', class: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
+}
+
 const typeIcon = { complaint: '⚠️', feedback: '💬', suggestion: '💡' }
 </script>
 
@@ -160,6 +229,7 @@ const typeIcon = { complaint: '⚠️', feedback: '💬', suggestion: '💡' }
               <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
                 {{ submission.is_anonymous ? 'Anonymous' : (submission.submitter_name || '—') }}
                 · {{ formatDate(submission.created_at) }}
+                <span v-if="submission.branch_name"> · {{ submission.branch_name }} branch</span>
               </p>
             </div>
             <button @click="$emit('close')"
@@ -199,6 +269,74 @@ const typeIcon = { complaint: '⚠️', feedback: '💬', suggestion: '💡' }
                 </svg>
                 View attachment
               </a>
+            </div>
+
+            <!-- Category -->
+            <div v-if="canManageSubmissions">
+              <h3 class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-2">Category</h3>
+              <div class="flex gap-2">
+                <input v-model="categoryInput" type="text" placeholder="e.g. Billing Dispute"
+                  class="input-base flex-1" maxlength="100" />
+                <button @click="submitCategory" :disabled="!categoryInput.trim() || savingCategory"
+                  class="btn-secondary !px-4 text-sm disabled:opacity-50 shrink-0">
+                  {{ savingCategory ? 'Saving…' : 'Save' }}
+                </button>
+              </div>
+
+              <!-- AI suggestion -->
+              <div v-if="submission.ai_insight" class="mt-2.5 flex items-start gap-2 p-2.5 rounded-lg bg-violet-50 dark:bg-violet-900/15 border border-violet-100 dark:border-violet-800">
+                <span class="text-sm shrink-0">🤖</span>
+                <div class="flex-1 min-w-0 text-xs">
+                  <p class="text-violet-700 dark:text-violet-300">
+                    AI suggests <span class="font-semibold">{{ submission.ai_insight.suggested_category }}</span>
+                    ({{ Math.round(submission.ai_insight.confidence * 100) }}% confident)
+                    <span :class="['ml-1 px-1.5 py-0.5 rounded-full font-semibold', sentimentMeta[submission.ai_insight.sentiment]?.class]">
+                      {{ sentimentMeta[submission.ai_insight.sentiment]?.label }}
+                    </span>
+                  </p>
+                  <p v-if="submission.ai_insight.applied" class="text-violet-500 dark:text-violet-400 mt-0.5">Already applied.</p>
+                  <button v-else @click="applyAISuggestion" class="text-primary hover:underline font-medium mt-0.5">
+                    Apply this category
+                  </button>
+                </div>
+              </div>
+
+              <button @click="runAIClassify" :disabled="classifying"
+                class="mt-2.5 flex items-center gap-1.5 text-xs font-semibold text-violet-600 dark:text-violet-400 hover:underline disabled:opacity-50">
+                <svg v-if="classifying" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                </svg>
+                {{ classifying ? 'Classifying…' : (submission.ai_insight ? 'Re-run AI Classification' : '🤖 AI Classify') }}
+              </button>
+              <p v-if="classifyError" class="field-error mt-1">{{ classifyError }}</p>
+            </div>
+            <div v-else-if="submission.category">
+              <h3 class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-2">Category</h3>
+              <p class="text-sm text-gray-700 dark:text-gray-300">{{ submission.category }}</p>
+            </div>
+
+            <!-- AI सुझाव (suggestion) -->
+            <div v-if="canManageSubmissions">
+              <div class="flex items-center justify-between mb-2">
+                <h3 class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">AI सुझाव (Suggestion)</h3>
+                <button @click="runGenerateSujhav" :disabled="generatingSujhav"
+                  class="flex items-center gap-1.5 text-xs font-semibold text-violet-600 dark:text-violet-400 hover:underline disabled:opacity-50">
+                  <svg v-if="generatingSujhav" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                  </svg>
+                  {{ generatingSujhav ? 'Generating…' : (submission.ai_suggestion ? 'Regenerate' : '🤖 Get Suggestion') }}
+                </button>
+              </div>
+              <div v-if="submission.ai_suggestion" class="space-y-2.5 p-3 rounded-xl bg-violet-50 dark:bg-violet-900/15 border border-violet-100 dark:border-violet-800 text-sm text-violet-900 dark:text-violet-200">
+                <p>{{ submission.ai_suggestion.suggestion_nepali }}</p>
+                <p class="pt-2.5 border-t border-violet-200/60 dark:border-violet-800/60 text-violet-700 dark:text-violet-300">
+                  {{ submission.ai_suggestion.suggestion_english }}
+                </p>
+              </div>
+              <p v-else class="text-xs text-gray-400 dark:text-gray-500 italic">No AI suggestion yet.</p>
+              <p v-if="sujhavError" class="field-error mt-1">{{ sujhavError }}</p>
             </div>
 
             <!-- Update status -->

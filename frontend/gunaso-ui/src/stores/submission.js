@@ -141,9 +141,42 @@ export const useSubmissionStore = defineStore('submission', () => {
     }
   }
 
+  function _replace(reference, data) {
+    const idx = orgSubmissions.value.findIndex((s) => s.reference_number === reference)
+    if (idx !== -1) orgSubmissions.value[idx] = data
+    if (currentSubmission.value?.reference_number === reference) currentSubmission.value = data
+  }
+
+  async function updateCategory(reference, category) {
+    try {
+      const { data } = await submissionsAPI.updateCategory(reference, category)
+      _replace(reference, data)
+      return data
+    } catch (err) {
+      error.value = apiErrorMessage(err, 'Failed to update category.')
+      throw err
+    }
+  }
+
+  async function aiClassify(reference) {
+    // Errors are re-thrown, not stored on `error` — the caller (a button in
+    // the detail panel) shows them inline rather than via the shared banner.
+    const { data } = await submissionsAPI.aiClassify(reference)
+    _replace(reference, data.submission)
+    return data
+  }
+
+  async function generateSujhav(reference) {
+    // Errors re-thrown, same rationale as aiClassify — shown inline by the caller.
+    const { data } = await submissionsAPI.aiSuggestion(reference)
+    _replace(reference, data)
+    return data
+  }
+
   return {
     submissions, currentSubmission, orgSubmissions, orgStats, loading, error, statsError,
     createSubmission, fetchByReference, fetchMySubmissions,
     fetchOrgSubmissions, fetchOrgStats, updateStatus, addNote, assignSubmission, setVisibility,
+    updateCategory, aiClassify, generateSujhav,
   }
 })

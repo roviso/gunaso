@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useOrganizationStore } from '@/stores/organization'
 import QRCodeDisplay from '@/components/QRCodeDisplay.vue'
 
@@ -8,6 +8,11 @@ const orgStore = useOrganizationStore()
 const slug = computed(() => orgStore.currentOrg?.slug)
 const orgName = computed(() => orgStore.currentOrg?.name || '')
 const submitUrl = computed(() => slug.value ? `${window.location.origin}/submit/${slug.value}` : '')
+const activeBranches = computed(() => orgStore.branches.filter((b) => b.is_active))
+
+onMounted(async () => {
+  if (slug.value) await orgStore.fetchBranches(slug.value)
+})
 </script>
 
 <template>
@@ -66,6 +71,27 @@ const submitUrl = computed(() => slug.value ? `${window.location.origin}/submit/
           </svg>
         </a>
       </div>
+    </div>
+
+    <!-- Branch QR gallery -->
+    <div v-if="activeBranches.length" class="pt-2">
+      <h3 class="text-sm font-bold text-gray-800 dark:text-white mb-1">Branch QR Codes</h3>
+      <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">
+        Each branch gets its own QR code. Print and post one at each location so you can tell
+        exactly which branch a gunaso came from.
+      </p>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div v-for="branch in activeBranches" :key="branch.id" class="card p-4">
+          <p class="text-sm font-semibold text-gray-900 dark:text-white mb-3 text-center">{{ branch.name }}</p>
+          <QRCodeDisplay :slug="slug" :org-name="orgName"
+            :branch-id="branch.id" :branch-name="branch.name" compact />
+        </div>
+      </div>
+    </div>
+    <div v-else-if="slug" class="card p-5 text-center text-sm text-gray-500 dark:text-gray-400">
+      No branches yet. Add one under
+      <RouterLink to="/org/branches" class="text-primary hover:underline font-medium">Branches</RouterLink>
+      to get it its own traceable QR code.
     </div>
   </div>
 </template>

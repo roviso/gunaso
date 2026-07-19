@@ -1,3 +1,4 @@
+from django.db.models import Count
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
@@ -15,10 +16,10 @@ from .serializers import (
     SubmissionSerializer,
     TrackSubmissionSerializer,
 )
-from .services import organization_stats, transition_status
+from .services import organization_stats, resolve_or_create_category, transition_status
 
 SUBMISSION_QS = (
-    Submission.objects.select_related('organization', 'category', 'citizen')
+    Submission.objects.select_related('organization', 'category', 'citizen', 'branch', 'ai_insight', 'ai_suggestion')
     .prefetch_related('updates__updated_by')
 )
 
@@ -175,6 +176,95 @@ class SubmissionVisibilityView(APIView):
         return Response(SubmissionSerializer(submission, context={'request': request}).data)
 
 
+class SubmissionCategoryUpdateView(APIView):
+    """PATCH /submissions/{reference}/category/ — manual categorization by
+    staff. Requires the 'manage_submissions' privilege — same gate as status
+    updates, since categorizing is part of ordinary case handling."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, reference_number):
+        submission = get_object_or_404(SUBMISSION_QS, reference_number=reference_number)
+        HasOrgPrivilege('manage_submissions').check(request, submission.organization)
+
+        name = (request.data.get('category') or '').strip()
+        if not name:
+            raise ValidationError({'category': 'This field is required.'})
+
+        submission.category = resolve_or_create_category(submission.organization, name)
+        submission.save(update_fields=['category', 'updated_at'])
+        return Response(SubmissionSerializer(submission, context={'request': request}).data)
+
+
+class SubmissionAIClassifyView(APIView):
+    """POST /submissions/{reference}/ai-classify/ — run AI classification for
+    this submission (apps.ai_insights). Requires 'manage_submissions'.
+
+    Returns 503 if AI features aren't configured for this deployment, 502 if
+    the AI request itself fails — both distinct from a 500 so the frontend can
+    show "AI unavailable" rather than a generic error.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'ai-classify'
+
+    def post(self, request, reference_number):
+        submission = get_object_or_404(SUBMISSION_QS, reference_number=reference_number)
+        HasOrgPrivilege('manage_submissions').check(request, submission.organization)
+
+        from apps.ai_insights.client import AIError
+        from apps.ai_insights.services import classify_and_store, is_ai_enabled
+
+        if not is_ai_enabled():
+            return Response(
+                {'detail': 'AI features are not configured for this deployment.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        try:
+            _insight, applied = classify_and_store(submission)
+        except AIError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        submission.refresh_from_db()
+        return Response({
+            'submission': SubmissionSerializer(submission, context={'request': request}).data,
+            'applied': applied,
+        })
+
+
+class SubmissionAISuggestionView(APIView):
+    """POST /submissions/{reference}/ai-suggestion/ — generate (or regenerate)
+    the AI सुझाव for this submission. Requires 'manage_submissions'.
+
+    Same 503/502 contract as SubmissionAIClassifyView.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'ai-suggestion'
+
+    def post(self, request, reference_number):
+        submission = get_object_or_404(SUBMISSION_QS, reference_number=reference_number)
+        HasOrgPrivilege('manage_submissions').check(request, submission.organization)
+
+        from apps.ai_insights.client import AIError
+        from apps.ai_insights.services import generate_and_store_sujhav, is_ai_enabled
+
+        if not is_ai_enabled():
+            return Response(
+                {'detail': 'AI features are not configured for this deployment.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        try:
+            generate_and_store_sujhav(submission)
+        except AIError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        submission.refresh_from_db()
+        return Response(SubmissionSerializer(submission, context={'request': request}).data)
+
+
 class SubmissionUpdatesView(generics.ListCreateAPIView):
     """GET/POST /submissions/{reference}/updates/ — audit trail and staff notes."""
 
@@ -219,7 +309,7 @@ class OrgAdminSubmissionsView(generics.ListAPIView):
 
     serializer_class = SubmissionSerializer
     permission_classes = [permissions.IsAuthenticated]
-    filterset_fields = ['status', 'priority', 'submission_type']
+    filterset_fields = ['status', 'priority', 'submission_type', 'branch']
     search_fields = ['title', 'reference_number']
 
     def get_queryset(self):
@@ -231,6 +321,63 @@ class OrgAdminSubmissionsView(generics.ListAPIView):
         if self.request.query_params.get('assigned_to') == 'me':
             qs = qs.filter(assigned_to__user=self.request.user, assigned_to__organization=org)
         return qs
+
+
+class OrgAIReportsView(generics.ListCreateAPIView):
+    """GET /org/ai-reports/ — past AI reports for the current user's org.
+    POST /org/ai-reports/ — generate a new one for {date_from, date_to}.
+
+    Requires 'view_stats' (same gate as OrganizationStatsView — reports are a
+    reporting feature, not case management).
+    """
+
+    pagination_class = None
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'ai-report'
+
+    def get_serializer_class(self):
+        from apps.ai_insights.serializers import AIReportSerializer
+        return AIReportSerializer
+
+    def _get_org(self):
+        org = _resolve_org_for_request(self.request)
+        if org is None:
+            raise NotFound('You do not manage any organization.')
+        HasOrgPrivilege('view_stats').check(self.request, org)
+        return org
+
+    def get_queryset(self):
+        from apps.ai_insights.models import AIReport
+        return AIReport.objects.filter(organization=self._get_org()).select_related('created_by')
+
+    def create(self, request, *args, **kwargs):
+        from apps.ai_insights.client import AIError
+        from apps.ai_insights.services import generate_and_store_report, is_ai_enabled
+
+        org = self._get_org()
+
+        from django.utils.dateparse import parse_date
+
+        date_from = parse_date(str(request.data.get('date_from') or ''))
+        date_to = parse_date(str(request.data.get('date_to') or ''))
+        if not date_from or not date_to:
+            raise ValidationError({'date_from': 'Both date_from and date_to are required, as YYYY-MM-DD.'})
+        if date_from > date_to:
+            raise ValidationError({'date_from': 'date_from must not be after date_to.'})
+
+        if not is_ai_enabled():
+            return Response(
+                {'detail': 'AI features are not configured for this deployment.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        try:
+            report = generate_and_store_report(org, date_from, date_to, created_by=request.user)
+        except AIError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        serializer = self.get_serializer(report)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 class OrgAdminStatsView(APIView):
@@ -245,6 +392,71 @@ class OrgAdminStatsView(APIView):
             raise NotFound('You do not manage any organization.')
         HasOrgPrivilege('view_stats').check(request, org)
         return Response(organization_stats(org))
+
+
+# How many recent branch-linked submissions feed the map's "thinking bubble"
+# cycle — small on purpose, this is a live/glanceable view, not a report.
+MAP_FEED_RECENT_LIMIT = 30
+MAP_FEED_EXCERPT_LENGTH = 90
+
+
+class OrgMapFeedView(APIView):
+    """GET /org/map-feed/ — branches with coordinates + a rolling window of
+    recent branch-linked submission excerpts, for the animated branch map
+    (Branch pins + "thinking bubble" popups). Requires 'view_submissions' —
+    it surfaces submission content (excerpts), not just aggregate counts.
+
+    Excerpts never include submitter identity, matching the anonymity rule —
+    only type/status/title feed the bubble text.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from apps.organizations.models import Branch
+
+        org = _resolve_org_for_request(request)
+        if org is None:
+            raise NotFound('You do not manage any organization.')
+        HasOrgPrivilege('view_submissions').check(request, org)
+
+        branches = Branch.objects.filter(
+            organization=org, is_active=True,
+            latitude__isnull=False, longitude__isnull=False,
+        ).annotate(submission_count_annotated=Count('submissions', distinct=True))
+
+        recent = (
+            Submission.objects.filter(organization=org, branch__in=branches)
+            .select_related('branch')
+            .order_by('-created_at')[:MAP_FEED_RECENT_LIMIT]
+        )
+
+        return Response({
+            'branches': [
+                {
+                    'id': b.id,
+                    'name': b.name,
+                    'latitude': float(b.latitude),
+                    'longitude': float(b.longitude),
+                    'submission_count': b.submission_count_annotated,
+                }
+                for b in branches
+            ],
+            'recent': [
+                {
+                    'branch_id': s.branch_id,
+                    'reference_number': s.reference_number,
+                    'excerpt': (
+                        s.title if len(s.title) <= MAP_FEED_EXCERPT_LENGTH
+                        else s.title[:MAP_FEED_EXCERPT_LENGTH].rsplit(' ', 1)[0] + '…'
+                    ),
+                    'type': s.submission_type,
+                    'status': s.status,
+                    'created_at': s.created_at,
+                }
+                for s in recent
+            ],
+        })
 
 
 class SubmissionAssignView(APIView):

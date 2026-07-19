@@ -7,6 +7,8 @@ const props = defineProps({
   showDateRange: { type: Boolean, default: false },
   showAssignee: { type: Boolean, default: false },
   staffList: { type: Array, default: () => [] },
+  showBranch: { type: Boolean, default: false },
+  branchList: { type: Array, default: () => [] },
   count: { type: Number, default: 0 },
 })
 
@@ -14,7 +16,7 @@ const emit = defineEmits(['update:modelValue', 'clear'])
 
 const hasFilters = computed(() => {
   const f = props.modelValue
-  return !!(f.status || f.type || f.priority || f.search || f.assignee || f.dateFrom || f.dateTo)
+  return !!(f.status || f.type || f.priority || f.search || f.assignee || f.branch || f.dateFrom || f.dateTo)
 })
 
 function update(field, value) {
@@ -82,6 +84,17 @@ function update(field, value) {
           <option v-for="s in staffList" :key="s.id" :value="String(s.id)">
             {{ s.name || s.user?.name || s.email }}
           </option>
+        </select>
+      </template>
+
+      <!-- Branch -->
+      <template v-if="showBranch">
+        <select
+          :value="modelValue.branch"
+          @change="update('branch', $event.target.value)"
+          class="input-base w-auto min-w-[130px]">
+          <option value="">All Branches</option>
+          <option v-for="b in branchList" :key="b.id" :value="String(b.id)">{{ b.name }}</option>
         </select>
       </template>
 

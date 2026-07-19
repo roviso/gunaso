@@ -29,9 +29,20 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from .models import Organization, OrganizationRating, OrganizationStaff, StaffInvite, StaffRole
+from .models import Branch, Organization, OrganizationRating, OrganizationStaff, StaffInvite, StaffRole
 
 User = get_user_model()
+
+_BRANCH_CODE_ATTEMPTS = 20
+
+
+def generate_branch_code() -> str:
+    """Random, non-enumerable 8-char hex code for a branch's QR target URL."""
+    for _ in range(_BRANCH_CODE_ATTEMPTS):
+        candidate = secrets.token_hex(4).upper()
+        if not Branch.objects.filter(code=candidate).exists():
+            return candidate
+    return secrets.token_hex(8).upper()
 
 
 def rate_organization(org: Organization, user, score: int) -> OrganizationRating:

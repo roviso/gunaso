@@ -59,6 +59,7 @@ services:
       CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS}
       SECURE_SSL_REDIRECT: ${SECURE_SSL_REDIRECT}
       MAX_ATTACHMENT_SIZE_MB: ${MAX_ATTACHMENT_SIZE_MB}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
     volumes:
       - static_files:/app/staticfiles
       - media_files:/app/media

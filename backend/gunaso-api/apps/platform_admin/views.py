@@ -157,7 +157,7 @@ class AdminSubmissionListView(generics.ListAPIView):
         from apps.submissions.models import Submission
         return (
             Submission.objects.all()
-            .select_related('organization', 'category', 'citizen')
+            .select_related('organization', 'category', 'citizen', 'branch', 'ai_insight', 'ai_suggestion')
             .prefetch_related('updates__updated_by')
         )
 

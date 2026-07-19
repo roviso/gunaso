@@ -54,4 +54,14 @@ export const organizationsAPI = {
   getQRCode: (slug) => api.get(`/organizations/${slug}/qrcode/`, {
     params: { format: 'base64', origin: window.location.origin },
   }),
+  getBranchQRCode: (slug, branchId) => api.get(`/organizations/${slug}/branches/${branchId}/qrcode/`, {
+    params: { format: 'base64', origin: window.location.origin },
+  }),
+
+  // Branches: public read (active only, unless the caller can manage_branches
+  // — see OrganizationBranchesView), management write.
+  getBranches: (slug) => api.get(`/organizations/${slug}/branches/`),
+  createBranch: (slug, data) => api.post(`/organizations/${slug}/branches/`, data),
+  updateBranch: (slug, branchId, data) => api.patch(`/organizations/${slug}/branches/${branchId}/`, data),
+  deleteBranch: (slug, branchId) => api.delete(`/organizations/${slug}/branches/${branchId}/`),
 }

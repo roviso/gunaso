@@ -3,7 +3,7 @@ import io
 from urllib.parse import urlparse
 
 from django.conf import settings as django_settings
-from django.db.models import Avg, Count, F, IntegerField, OuterRef, ProtectedError, Q, Subquery
+from django.db.models import Avg, Count, F, IntegerField, OuterRef, Prefetch, ProtectedError, Q, Subquery
 from django.db.models.functions import Coalesce
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404
@@ -15,10 +15,11 @@ from rest_framework.views import APIView
 
 from apps.accounts.views import _auth_payload, _set_refresh_cookie
 
-from .models import Organization, OrganizationRating, OrganizationStaff, StaffRole
+from .models import Branch, Organization, OrganizationRating, OrganizationStaff, StaffRole
 from .permissions import HasOrgPrivilege, IsOrgAdminOfOrg
 from .privileges import STAFF_PRIVILEGES
 from .serializers import (
+    BranchSerializer,
     OrganizationRatingSerializer,
     OrganizationSerializer,
     OrganizationStaffSerializer,
@@ -128,7 +129,7 @@ class OrganizationShowcaseView(generics.ListAPIView):
         org = get_object_or_404(Organization, slug=self.kwargs['slug'], is_active=True)
         return (
             Submission.objects.filter(organization=org, is_public=True)
-            .select_related('organization', 'category', 'citizen')
+            .select_related('organization', 'category', 'citizen', 'branch', 'ai_insight', 'ai_suggestion')
             .prefetch_related('updates__updated_by')
         )
 
@@ -192,7 +193,14 @@ class OrganizationLocationsView(APIView):
         orgs = Organization.objects.filter(
             is_active=True, is_verified=True,
             latitude__isnull=False, longitude__isnull=False,
-        ).annotate(**_rating_annotations()).order_by('name')
+        ).annotate(**_rating_annotations()).prefetch_related(
+            Prefetch(
+                'branches',
+                queryset=Branch.objects.filter(
+                    is_active=True, latitude__isnull=False, longitude__isnull=False,
+                ),
+            ),
+        ).order_by('name')
 
         return Response([
             {
@@ -206,9 +214,94 @@ class OrganizationLocationsView(APIView):
                     if org.show_rating and org.average_rating_annotated is not None else None
                 ),
                 'rating_count': org.rating_count_annotated if org.show_rating else None,
+                'branches': [
+                    {
+                        'id': b.id,
+                        'name': b.name,
+                        'address': b.address,
+                        'latitude': float(b.latitude),
+                        'longitude': float(b.longitude),
+                    }
+                    for b in org.branches.all()
+                ],
             }
             for org in orgs
         ])
+
+
+class OrganizationBranchesView(generics.ListCreateAPIView):
+    """GET /organizations/{slug}/branches/ — public list of active branches
+    (for the public map, the QR gallery, and submit-page branch resolution).
+    Org admin/staff with 'manage_branches' additionally see inactive branches.
+
+    POST requires 'manage_branches' — branches are a management action, not a
+    public-write surface.
+    """
+
+    serializer_class = BranchSerializer
+    pagination_class = None
+
+    def get_permissions(self):
+        if self.request.method == 'POST':
+            return [permissions.IsAuthenticated()]
+        return [permissions.AllowAny()]
+
+    def _get_org(self):
+        if not hasattr(self, '_org'):
+            self._org = get_object_or_404(Organization, slug=self.kwargs['slug'])
+        return self._org
+
+    def _can_manage(self, org) -> bool:
+        user = self.request.user
+        return bool(
+            user and user.is_authenticated
+            and HasOrgPrivilege('manage_branches').has_object_permission(self.request, self, org)
+        )
+
+    def get_queryset(self):
+        org = self._get_org()
+        qs = Branch.objects.filter(organization=org).annotate(
+            submission_count_annotated=Count('submissions', distinct=True),
+        )
+        if not self._can_manage(org):
+            qs = qs.filter(is_active=True)
+        return qs
+
+    def perform_create(self, serializer):
+        org = self._get_org()
+        HasOrgPrivilege('manage_branches').check(self.request, org)
+        serializer.save()
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['organization'] = self._get_org()
+        return context
+
+
+class OrganizationBranchDetailView(APIView):
+    """PATCH/DELETE /organizations/{slug}/branches/{branch_id}/ — 'manage_branches' privilege."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _get_objects(self, request, slug, branch_id):
+        org = get_object_or_404(Organization, slug=slug)
+        HasOrgPrivilege('manage_branches').check(request, org)
+        branch = get_object_or_404(Branch, pk=branch_id, organization=org)
+        return org, branch
+
+    def patch(self, request, slug, branch_id):
+        org, branch = self._get_objects(request, slug, branch_id)
+        serializer = BranchSerializer(
+            branch, data=request.data, partial=True, context={'organization': org},
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def delete(self, request, slug, branch_id):
+        _, branch = self._get_objects(request, slug, branch_id)
+        branch.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class OrganizationSettingsView(APIView):
@@ -235,7 +328,7 @@ class OrganizationSubmissionsView(generics.ListAPIView):
     """GET /organizations/{slug}/submissions/ — org admin or 'view_submissions' privilege."""
 
     permission_classes = [permissions.IsAuthenticated]
-    filterset_fields = ['status', 'priority', 'submission_type']
+    filterset_fields = ['status', 'priority', 'submission_type', 'branch']
 
     def get_serializer_class(self):
         from apps.submissions.serializers import SubmissionSerializer
@@ -247,7 +340,7 @@ class OrganizationSubmissionsView(generics.ListAPIView):
         HasOrgPrivilege('view_submissions').check(self.request, org)
         qs = (
             Submission.objects.filter(organization=org)
-            .select_related('organization', 'category', 'citizen')
+            .select_related('organization', 'category', 'citizen', 'branch', 'ai_insight', 'ai_suggestion')
             .prefetch_related('updates__updated_by')
         )
         # ?assigned_to=me — the current user's own queue on the staff
@@ -588,6 +681,47 @@ class OrganizationStaffDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+def _resolve_frontend_url(request) -> str:
+    """The origin the visitor is browsing on (?origin=), else FRONTEND_URL.
+
+    The QR code only encodes a link back to this platform's submit page, so
+    honouring the caller-provided origin keeps QR codes scannable when the
+    app is served through a tunnel or an alternate domain.
+    """
+    origin = request.query_params.get('origin', '')
+    parsed = urlparse(origin)
+    if parsed.scheme in ('http', 'https') and parsed.netloc:
+        return f'{parsed.scheme}://{parsed.netloc}'
+    return getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3000')
+
+
+def _render_qr(request, target_url: str, extra_payload: dict):
+    """Shared PNG/base64 QR renderer for the org-wide and per-branch QR views.
+
+    Raw Django responses (not DRF Response) — DRF would otherwise intercept
+    ?format= as a renderer format suffix and 404 on unknown values like
+    'base64'; callers must also override perform_content_negotiation (see
+    OrganizationQRCodeView) to prevent that interception in the first place.
+    """
+    import qrcode
+
+    qr = qrcode.QRCode(version=1, box_size=10, border=4)
+    qr.add_data(target_url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color='black', back_color='white')
+
+    buffer = io.BytesIO()
+    img.save(buffer, format='PNG')
+    buffer.seek(0)
+
+    fmt = request.query_params.get('format', 'png').lower()
+    if fmt == 'base64':
+        b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+        return JsonResponse({'qr_code': f'data:image/png;base64,{b64}', 'url': target_url, **extra_payload})
+
+    return HttpResponse(buffer.getvalue(), content_type='image/png')
+
+
 class OrganizationQRCodeView(APIView):
     """GET /organizations/{slug}/qrcode/ — PNG QR or base64 JSON linking to the submission page."""
 
@@ -602,46 +736,36 @@ class OrganizationQRCodeView(APIView):
             return renderers[0], renderers[0].media_type
         return None, None
 
-    @staticmethod
-    def _resolve_frontend_url(request) -> str:
-        """The origin the visitor is browsing on (?origin=), else FRONTEND_URL.
-
-        The QR code only encodes a link back to this platform's submit page, so
-        honouring the caller-provided origin keeps QR codes scannable when the
-        app is served through a tunnel or an alternate domain.
-        """
-        origin = request.query_params.get('origin', '')
-        parsed = urlparse(origin)
-        if parsed.scheme in ('http', 'https') and parsed.netloc:
-            return f'{parsed.scheme}://{parsed.netloc}'
-        return getattr(django_settings, 'FRONTEND_URL', 'http://localhost:3000')
-
     def get(self, request, slug):
-        import qrcode
-
         org = get_object_or_404(Organization, slug=slug, is_active=True)
-        frontend_url = self._resolve_frontend_url(request)
+        frontend_url = _resolve_frontend_url(request)
         target_url = f'{frontend_url}/submit/{slug}'
+        return _render_qr(request, target_url, {'org_name': org.name, 'org_slug': slug})
 
-        qr = qrcode.QRCode(version=1, box_size=10, border=4)
-        qr.add_data(target_url)
-        qr.make(fit=True)
-        img = qr.make_image(fill_color='black', back_color='white')
 
-        buffer = io.BytesIO()
-        img.save(buffer, format='PNG')
-        buffer.seek(0)
+class OrganizationBranchQRCodeView(APIView):
+    """GET /organizations/{slug}/branches/{branch_id}/qrcode/ — PNG QR or
+    base64 JSON linking to the submission page pre-filled with this branch.
 
-        # Use raw Django responses (not DRF Response) to avoid DRF intercepting
-        # ?format= as a renderer format suffix and returning 404.
-        fmt = request.query_params.get('format', 'png').lower()
-        if fmt == 'base64':
-            b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-            return JsonResponse({
-                'qr_code': f'data:image/png;base64,{b64}',
-                'url': target_url,
-                'org_name': org.name,
-                'org_slug': slug,
-            })
+    Same access model as OrganizationQRCodeView: the QR only encodes a public
+    submit-page link, and the branch `code` it embeds is already visible to
+    anyone who can list the org's (active) branches — so no extra gating.
+    """
 
-        return HttpResponse(buffer.getvalue(), content_type='image/png')
+    permission_classes = [permissions.AllowAny]
+
+    def perform_content_negotiation(self, request, force=False):
+        renderers = self.get_renderers()
+        if renderers:
+            return renderers[0], renderers[0].media_type
+        return None, None
+
+    def get(self, request, slug, branch_id):
+        org = get_object_or_404(Organization, slug=slug, is_active=True)
+        branch = get_object_or_404(Branch, pk=branch_id, organization=org, is_active=True)
+        frontend_url = _resolve_frontend_url(request)
+        target_url = f'{frontend_url}/submit/{slug}?branch={branch.code}'
+        return _render_qr(request, target_url, {
+            'org_name': org.name, 'org_slug': slug,
+            'branch_name': branch.name, 'branch_id': branch.id,
+        })

@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     'apps.organizations',
     'apps.submissions',
     'apps.platform_admin',
+    'apps.ai_insights',
 ]
 
 MIDDLEWARE = [
@@ -159,6 +160,9 @@ REST_FRAMEWORK = {
         'user': config('THROTTLE_USER', default='120/min'),
         'auth': config('THROTTLE_AUTH', default='10/min'),
         'submission-create': config('THROTTLE_SUBMISSION_CREATE', default='10/hour'),
+        'ai-classify': config('THROTTLE_AI_CLASSIFY', default='30/hour'),
+        'ai-suggestion': config('THROTTLE_AI_SUGGESTION', default='20/hour'),
+        'ai-report': config('THROTTLE_AI_REPORT', default='10/hour'),
     },
     'EXCEPTION_HANDLER': 'gunaso.exceptions.custom_exception_handler',
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
@@ -278,6 +282,16 @@ DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@gunaso.local'
 
 # Staff invite links (apps.organizations.services) expire after this many days.
 STAFF_INVITE_EXPIRY_DAYS = config('STAFF_INVITE_EXPIRY_DAYS', default=7, cast=int)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# AI features (apps.ai_insights) — classification, sujhav, reports
+# ──────────────────────────────────────────────────────────────────────────────
+# Unset by default: the app must run cleanly with no key configured. Every
+# AI-calling code path checks `ai_insights.services.is_ai_enabled()` first and
+# degrades gracefully (503 from the API, no button/section in the frontend)
+# rather than erroring — see apps/ai_insights/client.py.
+ANTHROPIC_API_KEY = config('ANTHROPIC_API_KEY', default='')
+AI_CLASSIFICATION_MODEL = config('AI_CLASSIFICATION_MODEL', default='claude-opus-4-8')
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Logging — structured console logging (picked up by Docker / systemd)

@@ -22,16 +22,16 @@ export const useOrganizationStore = defineStore('organization', () => {
   const privilegeCatalogLoading = ref(false)
   const privilegeCatalogError = ref(null)
 
-  const qrCode = ref(null)
-  const qrLoading = ref(false)
-  const qrError = ref(null)
-
   const dashboardStats = ref(null)
   const statsLoading = ref(false)
 
   const showcase = ref([])
   const showcaseLoading = ref(false)
   const showcaseError = ref(null)
+
+  const branches = ref([])
+  const branchesLoading = ref(false)
+  const branchesError = ref(null)
 
   async function fetchOrganizations(params = {}) {
     loading.value = true
@@ -186,19 +186,6 @@ export const useOrganizationStore = defineStore('organization', () => {
     }
   }
 
-  async function fetchQRCode(slug) {
-    qrLoading.value = true
-    qrError.value = null
-    try {
-      const { data } = await organizationsAPI.getQRCode(slug)
-      qrCode.value = data
-    } catch (err) {
-      qrError.value = apiErrorMessage(err, 'Could not load QR code.')
-    } finally {
-      qrLoading.value = false
-    }
-  }
-
   async function fetchStats(slug) {
     statsLoading.value = true
     try {
@@ -242,18 +229,69 @@ export const useOrganizationStore = defineStore('organization', () => {
     }
   }
 
+  async function fetchBranches(slug) {
+    branchesLoading.value = true
+    branchesError.value = null
+    try {
+      const { data } = await organizationsAPI.getBranches(slug)
+      branches.value = data.results || data
+    } catch (err) {
+      branchesError.value = apiErrorMessage(err, 'Could not load branches.')
+      branches.value = []
+    } finally {
+      branchesLoading.value = false
+    }
+  }
+
+  async function createBranch(slug, payload) {
+    branchesError.value = null
+    try {
+      const { data } = await organizationsAPI.createBranch(slug, payload)
+      branches.value = [...branches.value, data]
+      return data
+    } catch (err) {
+      branchesError.value = apiErrorMessage(err, 'Could not create branch.')
+      throw err
+    }
+  }
+
+  async function updateBranch(slug, branchId, payload) {
+    branchesError.value = null
+    try {
+      const { data } = await organizationsAPI.updateBranch(slug, branchId, payload)
+      const idx = branches.value.findIndex((b) => b.id === branchId)
+      if (idx !== -1) branches.value[idx] = { ...branches.value[idx], ...data }
+      return data
+    } catch (err) {
+      branchesError.value = apiErrorMessage(err, 'Could not update branch.')
+      throw err
+    }
+  }
+
+  async function deleteBranch(slug, branchId) {
+    branchesError.value = null
+    try {
+      await organizationsAPI.deleteBranch(slug, branchId)
+      branches.value = branches.value.filter((b) => b.id !== branchId)
+    } catch (err) {
+      branchesError.value = apiErrorMessage(err, 'Could not delete branch.')
+      throw err
+    }
+  }
+
   return {
     organizations, currentOrg, loading, error, totalCount,
     staff, staffLoading, staffError,
     roles, rolesLoading, rolesError,
     privilegeCatalog, privilegeCatalogLoading, privilegeCatalogError,
-    qrCode, qrLoading, qrError,
     dashboardStats, statsLoading,
     showcase, showcaseLoading, showcaseError,
+    branches, branchesLoading, branchesError,
     fetchOrganizations, fetchOrgBySlug, fetchMyOrg, refreshCurrentOrg, updateSettings,
     fetchStaff, inviteStaff, createStaffWithCredentials, resendInvite, removeStaff, updateStaffRole,
     fetchRoles, createRole, updateRole, deleteRole,
     fetchPrivilegeCatalog,
-    fetchQRCode, fetchStats, fetchShowcase,
+    fetchStats, fetchShowcase,
+    fetchBranches, createBranch, updateBranch, deleteBranch,
   }
 })
