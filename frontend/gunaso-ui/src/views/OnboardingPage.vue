@@ -2,11 +2,9 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { useOnboardingStore } from '@/stores/onboarding'
 
 const router = useRouter()
 const authStore = useAuthStore()
-const onboardingStore = useOnboardingStore()
 
 const step = ref(0)
 const direction = ref('forward')
@@ -112,8 +110,12 @@ function back() {
   }
 }
 
-function finish(to) {
-  onboardingStore.markOnboarded(authStore.user?.id)
+async function finish(to) {
+  try {
+    await authStore.markOnboardingComplete()
+  } catch {
+    // Non-critical: worst case the wizard reappears next login.
+  }
   router.push(to)
 }
 

@@ -41,7 +41,7 @@ docker compose up --build -d
 # 4. (First time) load sample data — orgs, categories, demo submissions
 docker compose exec backend python manage.py seed_data
 
-# 5. (Optional) create your own superuser for /admin/
+# 5. (Optional) create your own superuser for /django-admin/
 docker compose exec backend python manage.py createsuperuser
 ```
 
@@ -52,7 +52,7 @@ docker compose exec backend python manage.py createsuperuser
 | http://localhost | The Gunaso web app (via Nginx) |
 | http://localhost/api/v1/health/ | API health check |
 | http://localhost/api/v1/schema/swagger-ui/ | Interactive API docs |
-| http://localhost/admin/ | Django admin |
+| http://localhost/django-admin/ | Django admin |
 
 ### Sample logins (after `seed_data`)
 

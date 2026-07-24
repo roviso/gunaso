@@ -23,6 +23,11 @@ class User(AbstractUser):
     # assigns the initial password (apps/organizations/services.py) so a
     # temporary, admin-known credential can't remain valid indefinitely.
     must_change_password = models.BooleanField(default=False)
+    # Whether this account has been through the post-auth onboarding wizard
+    # (OnboardingPage.vue) at least once. Account-level (not per-device) so it
+    # survives a new browser/device — unlike the legacy per-device localStorage
+    # flag this replaces (see frontend stores/onboarding.js).
+    has_completed_onboarding = models.BooleanField(default=False)
 
     class Meta:
         ordering = ['username']

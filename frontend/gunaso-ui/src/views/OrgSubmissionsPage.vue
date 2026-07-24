@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSubmissionStore } from '@/stores/submission'
 import { useOrganizationStore } from '@/stores/organization'
@@ -164,13 +164,22 @@ onMounted(async () => {
     else uiStore.showInfo(`Submission ${ref} was not found in the current list.`)
     router.replace({ query: { ...route.query, ref: undefined } })
   }
-
-  const slug = orgStore.currentOrg?.slug
-  if (slug) {
-    await orgStore.fetchStaff(slug)
-    await orgStore.fetchBranches(slug)
-  }
 })
+
+// `orgStore.currentOrg` can still be resolving (OrgLayout fetches it
+// asynchronously) when this page mounts on a hard refresh, so a watcher is
+// used instead of a one-shot check in onMounted — see OrgBranchesPage.vue
+// for the full rationale.
+watch(
+  () => orgStore.currentOrg?.slug,
+  (slug) => {
+    if (slug) {
+      orgStore.fetchStaff(slug)
+      orgStore.fetchBranches(slug)
+    }
+  },
+  { immediate: true }
+)
 </script>
 
 <template>

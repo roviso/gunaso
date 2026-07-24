@@ -32,7 +32,7 @@ class Command(BaseCommand):
         self.stdout.write('  admin@nmbbank.com.np       / password123  (org_admin)')
         self.stdout.write('  superadmin@gunaso.com      / admin123     (superuser)')
         self.stdout.write('  -------------------------------------------------')
-        self.stdout.write('  Admin panel: http://localhost:8000/admin/')
+        self.stdout.write('  Admin panel: http://localhost:8000/django-admin/')
         self.stdout.write('  API root:    http://localhost:8000/api/v1/\n')
 
     # ------------------------------------------------------------------

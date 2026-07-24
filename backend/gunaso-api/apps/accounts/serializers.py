@@ -24,7 +24,7 @@ class UserSerializer(serializers.ModelSerializer):
             'id', 'username', 'email', 'first_name', 'last_name', 'name',
             'user_type', 'phone', 'avatar', 'date_joined',
             'organization_name', 'organization_slug',
-            'email_verified', 'must_change_password',
+            'email_verified', 'must_change_password', 'has_completed_onboarding',
             'is_staff', 'is_superuser',
         ]
         read_only_fields = [

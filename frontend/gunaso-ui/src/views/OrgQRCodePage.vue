@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, watch } from 'vue'
 import { useOrganizationStore } from '@/stores/organization'
 import QRCodeDisplay from '@/components/QRCodeDisplay.vue'
 
@@ -10,9 +10,10 @@ const orgName = computed(() => orgStore.currentOrg?.name || '')
 const submitUrl = computed(() => slug.value ? `${window.location.origin}/submit/${slug.value}` : '')
 const activeBranches = computed(() => orgStore.branches.filter((b) => b.is_active))
 
-onMounted(async () => {
-  if (slug.value) await orgStore.fetchBranches(slug.value)
-})
+// See OrgBranchesPage.vue: `slug` can still be resolving (OrgLayout fetches
+// currentOrg asynchronously) when this page mounts on a hard refresh, so a
+// watcher is used instead of a one-shot onMounted check.
+watch(slug, (s) => { if (s) orgStore.fetchBranches(s) }, { immediate: true })
 </script>
 
 <template>

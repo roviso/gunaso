@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useOrganizationStore } from '@/stores/organization'
 import { useUIStore } from '@/stores/ui'
@@ -124,9 +124,12 @@ async function confirmDelete() {
   }
 }
 
-onMounted(async () => {
-  if (slug.value) await orgStore.fetchBranches(slug.value)
-})
+// `slug` isn't guaranteed to be set the moment this page mounts — OrgLayout
+// resolves `orgStore.currentOrg` asynchronously in its own onMounted, and on
+// a hard refresh landing directly on this route both mount at the same time.
+// Watching (rather than a one-shot mount check) means the fetch still fires
+// once the org finishes loading instead of being silently skipped forever.
+watch(slug, (s) => { if (s) orgStore.fetchBranches(s) }, { immediate: true })
 </script>
 
 <template>

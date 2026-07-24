@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useOrganizationStore } from '@/stores/organization'
 import { useUIStore } from '@/stores/ui'
 import { apiErrorMessage } from '@/api/index'
@@ -134,10 +134,12 @@ async function confirmRemove() {
   }
 }
 
-onMounted(async () => {
-  if (!slug.value) return
-  await Promise.all([orgStore.fetchStaff(slug.value), orgStore.fetchRoles(slug.value)])
-})
+// `slug` can still be resolving (OrgLayout fetches currentOrg asynchronously)
+// when this page mounts on a hard refresh, so a watcher is used instead of a
+// one-shot onMounted check — see OrgBranchesPage.vue for the full rationale.
+watch(slug, (s) => {
+  if (s) Promise.all([orgStore.fetchStaff(s), orgStore.fetchRoles(s)])
+}, { immediate: true })
 </script>
 
 <template>

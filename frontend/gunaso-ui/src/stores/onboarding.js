@@ -1,32 +1,22 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 
-// Onboarding completion is a per-device UX flag, not account data —
-// keyed by user id so shared devices don't skip a new user's welcome.
-const KEY = 'gunaso_onboarded'
+// Legacy per-device completion flag, superseded by the account-level
+// User.has_completed_onboarding field. Kept read-only here only to backfill
+// accounts that finished onboarding under the old scheme (on this device)
+// before that field existed, so they aren't sent through the wizard again
+// after upgrading.
+const LEGACY_KEY = 'gunaso_onboarded'
 
-function readCompleted() {
+function readLegacyCompleted() {
   try {
-    return JSON.parse(localStorage.getItem(KEY) || '{}')
+    return JSON.parse(localStorage.getItem(LEGACY_KEY) || '{}')
   } catch {
     return {}
   }
 }
 
 export const useOnboardingStore = defineStore('onboarding', () => {
-  const completed = ref(readCompleted())
-
-  function hasOnboarded(userId) {
-    return !!completed.value[userId]
-  }
-
-  function markOnboarded(userId) {
-    if (!userId) return
-    completed.value = { ...completed.value, [userId]: true }
-    localStorage.setItem(KEY, JSON.stringify(completed.value))
-  }
-
   /**
    * Where to send a user right after authentication. Async: a non-org_admin
    * user's org access (active staff role/privileges) isn't knowable from the
@@ -40,7 +30,18 @@ export const useOnboardingStore = defineStore('onboarding', () => {
     // Superadmins skip the citizen/org onboarding flow entirely — the
     // control room is their home, not the welcome wizard.
     if (user?.is_superuser) return { name: 'AdminOverview' }
-    if (user?.id && !hasOnboarded(user.id)) return { name: 'Welcome' }
+
+    if (user?.id && !user.has_completed_onboarding) {
+      if (readLegacyCompleted()[user.id]) {
+        // Already finished onboarding on this device under the old scheme —
+        // sync it to the account so it's recognized everywhere from now on,
+        // and don't show the wizard again.
+        useAuthStore().markOnboardingComplete().catch(() => {})
+      } else {
+        return { name: 'Welcome' }
+      }
+    }
+
     if (user?.user_type === 'org_admin') return { name: 'OrgDashboard' }
 
     const authStore = useAuthStore()
@@ -50,5 +51,5 @@ export const useOnboardingStore = defineStore('onboarding', () => {
     return authStore.hasOrgAccess ? { name: 'OrgDashboard' } : { name: 'Dashboard' }
   }
 
-  return { completed, hasOnboarded, markOnboarded, postAuthRoute }
+  return { postAuthRoute }
 })

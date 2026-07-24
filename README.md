@@ -79,7 +79,7 @@ Services will start in dependency order. First boot may take a few minutes to bu
 | Frontend (Vue) | http://localhost |
 | API (REST) | http://localhost/api/v1/ |
 | API docs (Swagger UI) | http://localhost/api/v1/schema/swagger-ui/ |
-| Django Admin | http://localhost/admin/ |
+| Django Admin | http://localhost/django-admin/ |
 
 ### 5. Seed sample data & create a superuser (first time only)
 

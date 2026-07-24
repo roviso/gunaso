@@ -2,6 +2,10 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { authAPI } from '@/api/auth'
 import { apiErrorMessage, refreshSession, setAccessToken } from '@/api/index'
+import { useOrganizationStore } from '@/stores/organization'
+import { useSubmissionStore } from '@/stores/submission'
+import { useAdminStore } from '@/stores/admin'
+import { useAIReportsStore } from '@/stores/aiReports'
 
 const USER_KEY = 'gunaso_user'
 
@@ -69,6 +73,15 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
     localStorage.removeItem(USER_KEY)
     staffAccess.value = { organization_name: null, organization_slug: null, role_name: null, privileges: [] }
+    // These are Pinia setup-store singletons that otherwise keep the previous
+    // user's organization/submission/admin/AI-report data in memory across a
+    // logout -> different-user-login on the same tab (there's no full page
+    // reload in between). $dispose() drops each store from the registry so
+    // the next useXStore() call re-runs its setup function from scratch.
+    useOrganizationStore().$dispose()
+    useSubmissionStore().$dispose()
+    useAdminStore().$dispose()
+    useAIReportsStore().$dispose()
   }
 
   /** Restore the session from the httpOnly refresh cookie on app start. */
@@ -199,6 +212,20 @@ export const useAuthStore = defineStore('auth', () => {
     return data
   }
 
+  /**
+   * Persist onboarding completion on the account itself (User.has_completed_onboarding)
+   * rather than only in this device's localStorage — so it survives a new
+   * browser/device instead of re-showing the wizard for an account that
+   * already finished it elsewhere.
+   */
+  async function markOnboardingComplete() {
+    if (!user.value || user.value.has_completed_onboarding) return
+    const { data } = await authAPI.updateMe({ has_completed_onboarding: true })
+    user.value = data
+    localStorage.setItem(USER_KEY, JSON.stringify(data))
+    return data
+  }
+
   return {
     user, loading, error,
     staffAccess, staffAccessLoading, staffAccessError,
@@ -206,7 +233,7 @@ export const useAuthStore = defineStore('auth', () => {
     hasOrgAccess, accessibleOrgSlug, mustChangePassword, emailVerified,
     init, login, register, fetchMe, logout,
     fetchStaffAccess, hasPrivilege,
-    changePassword, requestEmailVerification, confirmEmailVerification,
+    changePassword, requestEmailVerification, confirmEmailVerification, markOnboardingComplete,
     // Exposed so flows that authenticate outside login/register — e.g.
     // AcceptInvitePage.vue's set-password step — can land the user in an
     // authenticated session via the exact same mechanism (access token in

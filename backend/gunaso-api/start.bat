@@ -31,7 +31,7 @@ if %errorlevel% neq 0 (
 )
 
 echo [3/3] Starting development server on http://127.0.0.1:8000
-echo  Admin panel: http://localhost:8000/admin/
+echo  Admin panel: http://localhost:8000/django-admin/
 echo  API docs:    http://localhost:8000/api/v1/schema/swagger-ui/
 echo ============================================
 python manage.py runserver 127.0.0.1:8000

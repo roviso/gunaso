@@ -4,6 +4,7 @@ export const authAPI = {
   login: (credentials) => api.post('/auth/login/', credentials),
   register: (data) => api.post('/auth/register/', data),
   me: () => api.get('/auth/me/'),
+  updateMe: (data) => api.patch('/auth/me/', data),
   logout: () => api.post('/auth/logout/'),
   refresh: () => api.post('/auth/refresh/'),
   // The current user's *active* OrganizationStaff membership — organization,

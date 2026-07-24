@@ -19,7 +19,12 @@ def health_check(request):
 
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
+    # Deliberately not 'admin/' — the frontend's own superadmin dashboard
+    # (Vue Router path /admin, apps/platform_admin's API) already owns that
+    # prefix. Nginx/this urlconf routing '/admin/...' to Django's admin site
+    # would intercept a hard refresh on the frontend's /admin/* routes before
+    # the SPA ever loads (see nginx/nginx.conf).
+    path('django-admin/', admin.site.urls),
     path('api/v1/health/', health_check, name='health-check'),
     path('api/v1/auth/', include('apps.accounts.urls')),
     path('api/v1/organizations/', include('apps.organizations.urls')),
