@@ -143,3 +143,32 @@ class EmailVerificationRequestSerializer(serializers.Serializer):
         if User.objects.filter(email__iexact=value).exclude(pk=user.pk).exists():
             raise serializers.ValidationError('An account with this email already exists.')
         return value
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """Just the email address. Deliberately performs NO existence check — the
+    view responds identically whether or not an account matches, so validation
+    here must not become an account-enumeration oracle (CLAUDE.md section 8)."""
+
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        return value.lower().strip()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    """The uid/token pair from the emailed link plus the chosen password.
+
+    The password is validated against Django's validators bound to the *target*
+    user (resolved by the view and passed in via context) so
+    UserAttributeSimilarityValidator can actually do its job — unlike
+    ChangePasswordSerializer there is no authenticated request user here.
+    """
+
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True)
+
+    def validate_new_password(self, value):
+        validate_password(value, user=self.context.get('user'))
+        return value

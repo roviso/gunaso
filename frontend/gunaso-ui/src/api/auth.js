@@ -17,6 +17,14 @@ export const authAPI = {
   // Forced first-login flow for admin-created staff accounts (must_change_password).
   changePassword: (data) => api.post('/auth/change-password/', data),
 
+  // Forgot password. Both calls are unauthenticated: the emailed uid/token
+  // pair *is* the credential, and the link is typically opened from a mail
+  // client with no session. requestPasswordReset always resolves 200 — the
+  // backend deliberately doesn't say whether the address matched an account.
+  requestPasswordReset: (email) => api.post('/auth/password-reset/', { email }),
+  confirmPasswordReset: ({ uid, token, newPassword }) =>
+    api.post('/auth/password-reset/confirm/', { uid, token, new_password: newPassword }),
+
   // Verifying an admin-typed email: request sends a link (optionally
   // correcting the address in the same call), confirm resolves the token
   // from that link. Confirm is intentionally unauthenticated on the backend.
