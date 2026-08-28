@@ -194,6 +194,27 @@ export const useAuthStore = defineStore('auth', () => {
     return data.user
   }
 
+  /**
+   * Ask for a reset link. Resolves the same way for a known and an unknown
+   * address — the backend won't say which, so neither can the UI.
+   */
+  async function requestPasswordReset(email) {
+    const { data } = await authAPI.requestPasswordReset(email)
+    return data
+  }
+
+  /**
+   * Finish a reset using the uid/token from the emailed link. The backend
+   * blacklists every refresh token for the account, so any session this
+   * device still held is dead — clear it rather than leave a stale user in
+   * localStorage that the next boot would try to restore.
+   */
+  async function confirmPasswordReset(payload) {
+    const { data } = await authAPI.confirmPasswordReset(payload)
+    clearSession()
+    return data
+  }
+
   async function requestEmailVerification(payload = {}) {
     const { data } = await authAPI.requestEmailVerification(payload)
     if (data.email && data.email !== user.value?.email) {
@@ -233,7 +254,8 @@ export const useAuthStore = defineStore('auth', () => {
     hasOrgAccess, accessibleOrgSlug, mustChangePassword, emailVerified,
     init, login, register, fetchMe, logout,
     fetchStaffAccess, hasPrivilege,
-    changePassword, requestEmailVerification, confirmEmailVerification, markOnboardingComplete,
+    changePassword, requestPasswordReset, confirmPasswordReset,
+    requestEmailVerification, confirmEmailVerification, markOnboardingComplete,
     // Exposed so flows that authenticate outside login/register — e.g.
     // AcceptInvitePage.vue's set-password step — can land the user in an
     // authenticated session via the exact same mechanism (access token in

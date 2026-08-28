@@ -272,16 +272,32 @@ FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
 # ──────────────────────────────────────────────────────────────────────────────
 # Email
 # ──────────────────────────────────────────────────────────────────────────────
-EMAIL_BACKEND = config('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
+# `or <default>` rather than only config(default=...): docker-compose passes
+# these through as empty strings when they're absent from .env, and an empty
+# string is a *present* value as far as python-decouple is concerned.
+EMAIL_BACKEND = (
+    config('EMAIL_BACKEND', default='') or 'django.core.mail.backends.console.EmailBackend'
+)
 EMAIL_HOST = config('EMAIL_HOST', default='')
 EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
 EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
 EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
-DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@gunaso.local')
+# Falls back to EMAIL_HOST_USER so a Gmail/SMTP setup only has to name the
+# sending mailbox once — providers reject a From that isn't the authenticated
+# account anyway.
+DEFAULT_FROM_EMAIL = (
+    config('DEFAULT_FROM_EMAIL', default='') or EMAIL_HOST_USER or 'noreply@gunaso.local'
+)
+EMAIL_TIMEOUT = config('EMAIL_TIMEOUT', default=15, cast=int)
 
 # Staff invite links (apps.organizations.services) expire after this many days.
 STAFF_INVITE_EXPIRY_DAYS = config('STAFF_INVITE_EXPIRY_DAYS', default=7, cast=int)
+
+# How long a password reset link stays valid, in seconds (Django's own setting,
+# consumed by default_token_generator via apps.accounts.services). Default 24h —
+# shorter than Django's 3-day default because the link is a full credential.
+PASSWORD_RESET_TIMEOUT = config('PASSWORD_RESET_TIMEOUT', default=60 * 60 * 24, cast=int)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # AI features (apps.ai_insights) — classification, sujhav, reports

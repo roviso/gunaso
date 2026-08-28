@@ -1,3 +1,5 @@
+import logging
+
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.db.models import Q
@@ -12,17 +14,24 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .serializers import (
     ChangePasswordSerializer,
     EmailVerificationRequestSerializer,
+    PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer,
     UserRegistrationSerializer,
     UserSerializer,
 )
 from .services import (
     EmailVerificationError,
+    PasswordResetError,
     generate_email_verification_token,
+    request_password_reset,
+    reset_password,
     resolve_email_verification_token,
+    resolve_password_reset_token,
     send_verification_email,
 )
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 def _set_refresh_cookie(response, refresh_token: str) -> None:
@@ -247,3 +256,73 @@ class ConfirmEmailVerificationView(APIView):
         user.email_verified = True
         user.save(update_fields=['email_verified'])
         return Response({'detail': 'Email verified.'})
+
+
+class PasswordResetRequestView(APIView):
+    """POST /auth/password-reset/ — email a reset link to the address given.
+
+    Always answers 200 with the same body, whether or not an account matched.
+    Anything else (404, a different message, a different latency class) would
+    turn this endpoint into an account-enumeration oracle, which CLAUDE.md
+    section 8 rules out for login and applies here for the same reason.
+
+    Throttled on the shared 'auth' scope so it can't be used to spray mail from
+    the platform's SMTP identity.
+    """
+
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
+
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            request_password_reset(serializer.validated_data['email'])
+        except Exception:
+            # A dead/misconfigured SMTP host must not tell the caller whether
+            # the address exists either, and must not surface an opaque 500
+            # for what is, to the user, a routine action. Details go to the
+            # server log only (CLAUDE.md section 9).
+            logger.exception('Password reset email could not be sent.')
+
+        return Response({
+            'detail': 'If an account exists for that email, a password reset link has been sent.',
+        })
+
+
+class PasswordResetConfirmView(APIView):
+    """POST /auth/password-reset/confirm/ — set a new password from a reset link.
+
+    Public by design: the link is opened from an email client, on a device with
+    no session — the uid/token pair is the credential. Same reasoning as the
+    staff-invite accept and email-verification confirm endpoints.
+    """
+
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
+
+    def post(self, request):
+        # Resolved before the serializer runs so the password validators can be
+        # bound to the actual target user (UserAttributeSimilarityValidator
+        # needs it), and so a bad link fails with one clear message rather than
+        # per-field noise.
+        try:
+            user = resolve_password_reset_token(
+                request.data.get('uid') or '', request.data.get('token') or '',
+            )
+        except PasswordResetError as exc:
+            return Response({'detail': exc.message}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = PasswordResetConfirmSerializer(data=request.data, context={'user': user})
+        serializer.is_valid(raise_exception=True)
+
+        reset_password(user, serializer.validated_data['new_password'])
+
+        response = Response({'detail': 'Your password has been reset. You can now sign in.'})
+        # Every refresh token for this account was just blacklisted; clearing
+        # the cookie keeps this browser from retrying a token it can't use.
+        _clear_refresh_cookie(response)
+        return response

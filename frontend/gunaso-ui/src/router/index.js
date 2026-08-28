@@ -20,6 +20,20 @@ const routes = [
     meta: { guest: true }
   },
   {
+    path: '/forgot-password', name: 'ForgotPassword',
+    component: () => import('@/views/ForgotPasswordPage.vue'),
+    meta: { guest: true }
+  },
+  {
+    // Public like /invite/:token — the uid/token pair from the email *is* the
+    // credential, and the link is normally opened from a mail client with no
+    // session. No `guest` meta either: someone signed in on this device may
+    // still be resetting the password of the account the link belongs to.
+    // Path must match apps/accounts/services.py::password_reset_link exactly.
+    path: '/reset-password/:uid/:token', name: 'ResetPassword',
+    component: () => import('@/views/ResetPasswordPage.vue')
+  },
+  {
     // Deliberately no requiresAuth/guest meta: an org admin who is already
     // signed in on this device may open a link inviting a *different* email,
     // and a signed-out visitor must be able to open it too — this route has
@@ -113,7 +127,14 @@ router.beforeEach(async (to, _from, next) => {
     return next({ name: 'Login', query: { redirect: to.fullPath } })
   }
 
-  if (auth.isAuthenticated && auth.mustChangePassword && to.name !== 'ChangePassword') {
+  // ResetPassword is exempt alongside ChangePassword: both are ways to satisfy
+  // the same requirement, and bouncing an emailed reset link back to the
+  // forced-change screen would strand a user who came here precisely because
+  // they don't have the temporary password any more.
+  if (
+    auth.isAuthenticated && auth.mustChangePassword &&
+    to.name !== 'ChangePassword' && to.name !== 'ResetPassword'
+  ) {
     return next({ name: 'ChangePassword' })
   }
 

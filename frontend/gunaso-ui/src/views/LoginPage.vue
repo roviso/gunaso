@@ -120,7 +120,7 @@ onMounted(() => emailInput.value?.focus())
             <div>
               <div class="flex items-center justify-between mb-1.5">
                 <label class="label !mb-0" for="login-password">Password</label>
-                <a href="#" class="text-xs text-primary hover:underline">Forgot password?</a>
+                <RouterLink to="/forgot-password" class="text-xs text-primary hover:underline">Forgot password?</RouterLink>
               </div>
               <div class="relative">
                 <input id="login-password" v-model="form.password" :type="showPassword ? 'text' : 'password'" placeholder="••••••••"

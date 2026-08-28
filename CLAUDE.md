@@ -241,6 +241,8 @@ All endpoints are under `/api/v1/`. OpenAPI docs: `/api/v1/schema/swagger-ui/`.
 | `POST /auth/refresh/` | refresh cookie | Rotate refresh token, return new access token |
 | `POST /auth/logout/` | refresh cookie | Blacklist refresh token, clear cookie |
 | `GET/PATCH /auth/me/` | Bearer | Own profile |
+| `POST /auth/password-reset/` | — (throttled) | Email a reset link; always 200, never says whether the account exists |
+| `POST /auth/password-reset/confirm/` | — (throttled) | Set a new password from the emailed `uid`/`token`; 400 on a dead link |
 | `GET /organizations/` | — | Verified orgs (paginated, `?search=`, `?category=`) |
 | `POST /organizations/` | Bearer | Register org (starts unverified; creator becomes org_admin) |
 | `GET /organizations/mine/` | Bearer | Org managed by current user |
@@ -346,6 +348,29 @@ All endpoints are under `/api/v1/`. OpenAPI docs: `/api/v1/schema/swagger-ui/`.
 - `SECRET_KEY` and `JWT_SIGNING_KEY` come from env; the app **refuses to boot** with
   `DEBUG=False` and no `SECRET_KEY`.
 
+### Password reset ("forgot password")
+
+`apps/accounts/services.py` — request a link at `POST /auth/password-reset/`, spend it at
+`POST /auth/password-reset/confirm/`. Frontend: `/forgot-password` →
+`ForgotPasswordPage.vue`, `/reset-password/:uid/:token` → `ResetPasswordPage.vue`.
+
+- The link carries a `uid` (base64 pk) + `token` from **`default_token_generator`**, not
+  a `django.core.signing` token like email verification. Its hash includes the current
+  password hash, so a link **stops working the moment it is used** — the single-use
+  property comes free, with no DB table to track. Expiry is `PASSWORD_RESET_TIMEOUT`
+  (default 24h, deliberately shorter than Django's 3-day default).
+- The link's path must stay in sync between `services.py::password_reset_link` and the
+  `/reset-password/:uid/:token` route in `router/index.js`.
+- **The request endpoint always answers 200 with the same body** — matched email, unknown
+  email, inactive account, or an SMTP failure. Any difference (404, another message,
+  a 500) turns it into an account-enumeration oracle. The UI's confirmation screen is
+  worded generically for the same reason.
+- Accounts with an **unusable password** (an unaccepted staff invite) get no reset mail —
+  a reset link there would bypass the single-use invite flow.
+- Confirming **blacklists every outstanding refresh token** for the account, since this is
+  the flow someone uses after a suspected takeover, and clears `must_change_password`.
+- Emails are multipart, rendered from `templates/email/password_reset.{txt,html}`.
+
 ### Permission model
 
 | Actor | Can |
@@ -430,6 +455,25 @@ Backend-only extras: `DATABASE_URL`, `REDIS_URL`, `JWT_*_LIFETIME_*`, `THROTTLE_
 `LOG_LEVEL`, `DB_CONN_MAX_AGE`, `STAFF_INVITE_EXPIRY_DAYS` (default 7 — how long a staff
 invite link stays valid; see `apps/organizations/services.py`), `AI_CLASSIFICATION_MODEL`
 (default `claude-opus-4-8`).
+
+### Email
+
+`EMAIL_BACKEND`, `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USE_TLS`, `EMAIL_HOST_USER`,
+`EMAIL_HOST_PASSWORD`, `DEFAULT_FROM_EMAIL`, `EMAIL_TIMEOUT` (default 15s).
+Without them the console backend prints mail to the terminal, so password reset, staff
+invites and email verification all *appear* to work in dev while sending nothing. With
+Gmail, `EMAIL_HOST_PASSWORD` must be a 16-character **App Password**, not the account
+password. `DEFAULT_FROM_EMAIL` falls back to `EMAIL_HOST_USER` when unset — providers
+reject a From that isn't the authenticated mailbox.
+
+`FRONTEND_URL` (default `http://localhost:3000`) is the origin every emailed link points
+at — it must be the **SPA's** origin, not the API's. `PASSWORD_RESET_TIMEOUT` (seconds,
+default 86400) bounds reset-link validity.
+
+All of the above are forwarded to the backend container in `docker-compose.yml`, each with
+a `${VAR:-default}` fallback: they're optional in `.env`, and an unset compose variable
+arrives as an empty string, which would otherwise override the settings defaults and break
+the int/bool casts.
 
 Frontend: `VITE_API_BASE_URL` (keep it `/api/v1`).
 
