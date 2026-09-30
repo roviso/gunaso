@@ -128,3 +128,7 @@ $RECYCLE.BIN/
 # ──────────────────────────────────────────────
 logs/
 *.log
+
+# Deploy script state: DB backups, previous SPA build, history (scripts/deploy.py)
+/.deploy/
+/backend/gunaso-api/frontend.new/
