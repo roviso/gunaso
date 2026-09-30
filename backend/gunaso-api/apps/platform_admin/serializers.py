@@ -3,7 +3,7 @@ from rest_framework import serializers
 
 from apps.organizations.models import Organization
 
-from .models import PlatformAuditLog
+from .models import ContactMessage, PlatformAuditLog
 
 User = get_user_model()
 
@@ -82,3 +82,37 @@ class PlatformAuditLogSerializer(serializers.ModelSerializer):
         if obj.actor:
             return obj.actor.get_full_name() or obj.actor.username
         return 'System'
+
+
+class ContactMessageCreateSerializer(serializers.ModelSerializer):
+    """Public contact form. `website` is a honeypot: humans never see the
+    field, so any value means a bot (the view then drops the message while
+    still answering 201, giving the bot nothing to learn from)."""
+
+    website = serializers.CharField(required=False, allow_blank=True, write_only=True)
+
+    class Meta:
+        model = ContactMessage
+        fields = ['name', 'email', 'organization', 'topic', 'message', 'website']
+        extra_kwargs = {
+            'name': {'max_length': 200},
+            'message': {'min_length': 10, 'max_length': 5000},
+        }
+
+
+class ContactMessageSerializer(serializers.ModelSerializer):
+    topic_label = serializers.CharField(source='get_topic_display', read_only=True)
+    handled_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ContactMessage
+        fields = [
+            'id', 'name', 'email', 'organization', 'topic', 'topic_label', 'message',
+            'is_handled', 'handled_by_name', 'handled_at', 'created_at',
+        ]
+        read_only_fields = fields
+
+    def get_handled_by_name(self, obj):
+        if obj.handled_by:
+            return obj.handled_by.get_full_name() or obj.handled_by.username
+        return None

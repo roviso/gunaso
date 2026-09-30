@@ -2,6 +2,7 @@
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import { NEPAL_CENTER, addBaseTiles, pinIcon as makePin } from '@/utils/map'
 
 // v-model: { latitude: number|null, longitude: number|null }. Click the map
 // (or edit the number inputs) to place/move a single marker; "Clear" resets
@@ -16,20 +17,34 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:modelValue'])
 
-const NEPAL_CENTER = [28.3949, 84.124]
 const mapEl = ref(null)
+const locating = ref(false)
+const locateError = ref('')
 let map = null
 let marker = null
 
-const pinIcon = L.divIcon({
-  className: '',
-  html: `<svg width="30" height="42" viewBox="0 0 30 42" xmlns="http://www.w3.org/2000/svg">
-    <path d="M15 0C6.7 0 0 6.7 0 15c0 11.2 15 27 15 27s15-15.8 15-27C30 6.7 23.3 0 15 0z" fill="#E63946"/>
-    <circle cx="15" cy="15" r="6" fill="white"/>
-  </svg>`,
-  iconSize: [30, 42],
-  iconAnchor: [15, 42],
-})
+const pinIcon = makePin({ color: '#E63946' })
+
+function useMyLocation() {
+  if (!navigator.geolocation) {
+    locateError.value = 'Your browser does not support location.'
+    return
+  }
+  locating.value = true
+  locateError.value = ''
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      locating.value = false
+      setLocation(pos.coords.latitude, pos.coords.longitude)
+      map?.setView([pos.coords.latitude, pos.coords.longitude], 16)
+    },
+    () => {
+      locating.value = false
+      locateError.value = 'Location permission was denied — click the map instead.'
+    },
+    { enableHighAccuracy: true, timeout: 10000 },
+  )
+}
 
 function placeMarker(lat, lng) {
   if (!map) return
@@ -75,10 +90,7 @@ onMounted(() => {
     ? [Number(props.modelValue.latitude), Number(props.modelValue.longitude)]
     : NEPAL_CENTER
   map = L.map(mapEl.value).setView(center, hasLocation ? 13 : 6)
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    maxZoom: 19,
-  }).addTo(map)
+  addBaseTiles(map)
   if (hasLocation) placeMarker(center[0], center[1])
   map.on('click', (e) => setLocation(e.latlng.lat, e.latlng.lng))
 })
@@ -107,7 +119,18 @@ function updateLng(value) {
 
 <template>
   <div>
-    <div ref="mapEl" :class="['rounded-xl overflow-hidden border border-gray-200 dark:border-gray-600 z-0', height]"></div>
+    <div class="relative">
+      <div ref="mapEl" :class="['rounded-xl overflow-hidden border border-gray-200 dark:border-gray-600 z-0', height]"></div>
+      <button type="button" @click="useMyLocation" :disabled="locating"
+        class="absolute top-3 right-3 z-[500] inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl bg-white dark:bg-gray-800 text-secondary dark:text-white shadow-md border border-gray-200 dark:border-gray-600 hover:bg-gray-50 disabled:opacity-60">
+        <svg :class="['w-4 h-4', locating ? 'animate-spin' : '']" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="3" stroke-width="2"/><path stroke-linecap="round" stroke-width="2" d="M12 2v3m0 14v3M2 12h3m14 0h3"/>
+        </svg>
+        {{ locating ? 'Locating…' : 'Use my location' }}
+      </button>
+    </div>
+    <p class="text-xs text-gray-400 dark:text-gray-500 mt-1.5">Click the map to drop the pin, or use your current location.</p>
+    <p v-if="locateError" class="field-error">{{ locateError }}</p>
     <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3 items-end">
       <div>
         <label class="label">Latitude</label>

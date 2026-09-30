@@ -11,6 +11,8 @@ import SubmissionDetailPanel from '@/components/SubmissionDetailPanel.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import PriorityBadge from '@/components/PriorityBadge.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
+import { submissionsAPI } from '@/api/submissions'
+import { apiErrorMessage } from '@/api/index'
 
 const route = useRoute()
 const router = useRouter()
@@ -31,6 +33,65 @@ for (const key of Object.keys(filters.value)) {
 }
 const selectedIds = ref(new Set())
 const activeSubmission = ref(null)
+
+// Work queues — resolved server-side (see OrgAdminSubmissionsView /
+// _apply_queue_filters) so they're correct beyond the first page.
+const QUEUES = [
+  { key: 'open', label: 'Open', params: { open: 'true' } },
+  { key: 'overdue', label: '⏰ Overdue', params: { overdue: 'true' } },
+  { key: 'waiting', label: '💬 Citizen waiting', params: { awaiting_reply: 'true' } },
+  { key: 'unassigned', label: 'Unassigned', params: { assigned_to: 'none', open: 'true' } },
+  { key: 'mine', label: 'Assigned to me', params: { assigned_to: 'me' } },
+  { key: 'all', label: 'All', params: {} },
+]
+const PAGE_SIZE = 100
+const queue = ref(QUEUES.some((q) => q.key === route.query.queue) ? route.query.queue : 'all')
+const queueParams = computed(() => QUEUES.find((q) => q.key === queue.value)?.params || {})
+const exporting = ref(false)
+
+function loadQueue() {
+  selectedIds.value = new Set()
+  return submissionStore.fetchOrgSubmissions({ page_size: PAGE_SIZE, ...queueParams.value })
+}
+
+watch(queue, (q) => {
+  router.replace({ query: { ...route.query, queue: q === 'all' ? undefined : q } })
+  loadQueue()
+})
+
+// Full, server-side export of the current queue + the filters the API
+// understands. Unlike the selection export below, this isn't capped to the
+// rows loaded on screen and applies the backend's anonymity/contact rules.
+async function exportAll() {
+  if (exporting.value) return
+  exporting.value = true
+  try {
+    const f = filters.value
+    const params = {
+      ...queueParams.value,
+      ...(f.status && !f.status.includes(',') ? { status: f.status } : {}),
+      ...(f.type ? { submission_type: f.type } : {}),
+      ...(f.priority ? { priority: f.priority } : {}),
+      ...(f.branch ? { branch: f.branch } : {}),
+      ...(f.search ? { search: f.search } : {}),
+    }
+    const { data, headers } = await submissionsAPI.exportCsv(params)
+    const match = /filename="([^"]+)"/.exec(headers['content-disposition'] || '')
+    const url = URL.createObjectURL(data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = match ? match[1] : 'gunaso-submissions.csv'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    uiStore.showSuccess('Export downloaded.')
+  } catch (err) {
+    uiStore.showError(apiErrorMessage(err, 'Export failed.'))
+  } finally {
+    exporting.value = false
+  }
+}
 
 const BASE_STATUSES = [
   { value: 'submitted',    label: 'Submitted' },
@@ -105,7 +166,7 @@ async function handleUpdated(updated) {
   if (updated && activeSubmission.value) {
     activeSubmission.value = { ...activeSubmission.value, ...updated }
   }
-  await submissionStore.fetchOrgSubmissions()
+  await loadQueue()
 }
 
 function exportCSV() {
@@ -154,14 +215,21 @@ const someSelected = computed(
 const typeIcon = { complaint: '⚠️', feedback: '💬', suggestion: '💡' }
 
 onMounted(async () => {
-  await submissionStore.fetchOrgSubmissions({ page_size: 100 })
+  await loadQueue()
 
   // ?ref=GUN-... deep-links straight into a submission's detail panel
   const ref = route.query.ref
   if (typeof ref === 'string' && ref) {
     const match = submissionStore.orgSubmissions.find((s) => s.reference_number === ref)
     if (match) openDetail(match)
-    else uiStore.showInfo(`Submission ${ref} was not found in the current list.`)
+    else {
+      // Older than the loaded page — fetch it directly.
+      try {
+        openDetail(await submissionStore.refreshSubmission(ref))
+      } catch {
+        uiStore.showInfo(`Submission ${ref} was not found.`)
+      }
+    }
     router.replace({ query: { ...route.query, ref: undefined } })
   }
 })
@@ -184,7 +252,23 @@ watch(
 
 <template>
   <div class="p-6 space-y-5">
-    <h1 class="text-xl font-extrabold text-secondary dark:text-white">Submissions</h1>
+    <div class="flex items-center justify-between gap-3 flex-wrap">
+      <h1 class="text-xl font-extrabold text-secondary dark:text-white">Submissions</h1>
+      <button @click="exportAll" :disabled="exporting" class="btn-secondary !py-2 !px-4 text-sm">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+        </svg>
+        {{ exporting ? 'Preparing…' : 'Export CSV' }}
+      </button>
+    </div>
+
+    <div class="flex gap-1.5 overflow-x-auto pb-1" role="tablist" aria-label="Work queues">
+      <button v-for="q in QUEUES" :key="q.key" role="tab" :aria-selected="queue === q.key" @click="queue = q.key"
+        :class="['shrink-0 px-3.5 py-2 rounded-xl text-sm font-semibold transition-colors',
+          queue === q.key ? 'bg-secondary text-white shadow-sm' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:border-gray-300']">
+        {{ q.label }}
+      </button>
+    </div>
 
     <FilterBar
       v-model="filters"
@@ -196,6 +280,12 @@ watch(
       :branch-list="orgStore.branches"
       :count="filtered.length"
       @clear="clearFilters" />
+
+    <p v-if="!submissionStore.loading && submissionStore.orgSubmissionsCount > submissionStore.orgSubmissions.length"
+      class="text-xs text-gray-500 dark:text-gray-400">
+      Showing the {{ submissionStore.orgSubmissions.length }} most recent of {{ submissionStore.orgSubmissionsCount }} in this queue —
+      use a narrower queue, or Export CSV for all of them.
+    </p>
 
     <LoadingSpinner v-if="submissionStore.loading" />
 
@@ -251,8 +341,11 @@ watch(
                   <span>{{ typeIcon[sub.type] || '📋' }}</span>
                   {{ sub.title }}
                 </p>
-                <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
                   {{ sub.is_anonymous ? 'Anonymous' : (sub.submitter_name || '—') }}
+                  <span v-if="sub.is_overdue" class="px-1.5 py-px rounded-full text-[10px] font-bold bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-300">Overdue</span>
+                  <span v-if="sub.awaiting_reply" class="px-1.5 py-px rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">Citizen waiting</span>
+                  <span v-if="sub.satisfaction_score" class="text-[10px] font-bold text-amber-500">★ {{ sub.satisfaction_score }}</span>
                 </p>
               </td>
               <td class="px-4 py-3 whitespace-nowrap">

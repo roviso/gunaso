@@ -3,7 +3,7 @@ import io
 from urllib.parse import urlparse
 
 from django.conf import settings as django_settings
-from django.db.models import Avg, Count, F, IntegerField, OuterRef, Prefetch, ProtectedError, Q, Subquery
+from django.db.models import Avg, Count, Exists, F, IntegerField, OuterRef, Prefetch, ProtectedError, Q, Subquery
 from django.db.models.functions import Coalesce
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404
@@ -181,43 +181,63 @@ class OrganizationRatingView(APIView):
 class OrganizationLocationsView(APIView):
     """GET /organizations/locations/ — public, unpaginated map payload.
 
-    Only active, verified organizations that have both coordinates set.
-    Deliberately lightweight (no description/contact fields) since the map
-    may load every organization at once; `average_rating`/`rating_count`
-    are nulled when the org opted out of public ratings.
+    Every active, verified organization that has coordinates itself or at
+    least one located active branch (an org can be findable on the map only
+    through its branches). Deliberately lightweight — no description or
+    contact fields — since the map loads everything at once.
+    `average_rating`/`rating_count` are nulled when the org opted out of
+    public ratings. Branch `code`s are included so the map can deep-link
+    straight into a branch-specific submit form; they're already public on
+    the branch list endpoint.
     """
 
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
-        orgs = Organization.objects.filter(
-            is_active=True, is_verified=True,
-            latitude__isnull=False, longitude__isnull=False,
-        ).annotate(**_rating_annotations()).prefetch_related(
-            Prefetch(
-                'branches',
-                queryset=Branch.objects.filter(
-                    is_active=True, latitude__isnull=False, longitude__isnull=False,
-                ),
-            ),
-        ).order_by('name')
+        located_branches = Branch.objects.filter(
+            is_active=True, latitude__isnull=False, longitude__isnull=False,
+        )
+        orgs = (
+            org_queryset_with_counts()
+            .filter(is_active=True, is_verified=True)
+            .filter(
+                Q(latitude__isnull=False, longitude__isnull=False)
+                | Q(Exists(located_branches.filter(organization=OuterRef('pk'))))
+            )
+            .prefetch_related(Prefetch('branches', queryset=located_branches))
+            .order_by('name')
+        )
+
+        def resolved_percent(org):
+            total = org.submission_count_annotated
+            return round(org.resolved_count_annotated * 100 / total) if total else 0
 
         return Response([
             {
+                'id': org.id,
                 'name': org.name,
                 'slug': org.slug,
                 'category': org.category,
-                'latitude': float(org.latitude),
-                'longitude': float(org.longitude),
+                'logo': request.build_absolute_uri(org.logo.url) if org.logo else None,
+                'address': org.address,
+                'latitude': float(org.latitude) if org.latitude is not None else None,
+                'longitude': float(org.longitude) if org.longitude is not None else None,
                 'average_rating': (
                     round(float(org.average_rating_annotated), 1)
                     if org.show_rating and org.average_rating_annotated is not None else None
                 ),
                 'rating_count': org.rating_count_annotated if org.show_rating else None,
+                'submission_count': org.submission_count_annotated,
+                'resolved_percent': resolved_percent(org),
+                'avg_resolution_days': (
+                    round(org.avg_resolution_annotated.total_seconds() / 86400, 1)
+                    if org.avg_resolution_annotated else None
+                ),
                 'branches': [
                     {
                         'id': b.id,
                         'name': b.name,
+                        'code': b.code,
                         'address': b.address,
                         'latitude': float(b.latitude),
                         'longitude': float(b.longitude),

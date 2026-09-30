@@ -58,6 +58,14 @@ onMounted(refresh)
     <LoadingSpinner v-else-if="adminStore.overviewLoading && !adminStore.overview" />
 
     <template v-else-if="adminStore.overview">
+      <RouterLink v-if="adminStore.overview.inbox?.unhandled" :to="{ name: 'AdminInbox' }"
+        class="flex items-center gap-3 p-4 rounded-2xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/60 hover:shadow-md transition-shadow">
+        <span class="text-2xl" aria-hidden="true">📥</span>
+        <p class="text-sm font-semibold text-amber-900 dark:text-amber-100">
+          {{ adminStore.overview.inbox.unhandled }} unhandled contact message{{ adminStore.overview.inbox.unhandled === 1 ? '' : 's' }}
+        </p>
+        <span class="ml-auto text-sm font-bold text-amber-700 dark:text-amber-300">Open inbox →</span>
+      </RouterLink>
       <!-- Stat cards -->
       <div class="grid grid-cols-2 xl:grid-cols-4 gap-4">
         <RouterLink to="/admin/organizations" class="block rounded-2xl hover:shadow-md transition-shadow">

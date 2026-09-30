@@ -1,0 +1,22 @@
+{% autoescape off %}Hi {{ name }},
+
+{{ headline }}.
+
+  Reference number: {{ reference }}
+  Subject: {{ title }}
+{% if explainer %}
+{{ explainer }}
+{% endif %}{% if note %}
+Message from {{ organization }}:
+"{{ note }}"
+{% endif %}
+See the full timeline:
+{{ link }}
+{% if invite_feedback %}
+Tell {{ organization }} how they did: open the private follow-up link from
+your first email and rate the outcome.
+{% else %}
+To reply, open the private follow-up link from your confirmation email.
+{% endif %}
+— The {{ site_name }} team
+{% endautoescape %}

@@ -2,6 +2,8 @@ from django.urls import path
 
 from .views import (
     AdminAuditLogListView,
+    AdminContactMessageDetailView,
+    AdminContactMessageListView,
     AdminOrganizationActionView,
     AdminOrganizationListView,
     AdminOrganizationStaffView,
@@ -26,4 +28,10 @@ urlpatterns = [
     path('users/<int:user_id>/demote/', AdminUserDemoteView.as_view(), name='admin-user-demote'),
     path('submissions/', AdminSubmissionListView.as_view(), name='admin-submission-list'),
     path('audit-log/', AdminAuditLogListView.as_view(), name='admin-audit-log'),
+    path('contact-messages/', AdminContactMessageListView.as_view(), name='admin-contact-messages'),
+    path(
+        'contact-messages/<int:message_id>/',
+        AdminContactMessageDetailView.as_view(),
+        name='admin-contact-message-detail',
+    ),
 ]

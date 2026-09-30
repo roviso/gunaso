@@ -59,17 +59,20 @@ gunaso/
 │   │   ├── settings.py            # Single env-driven settings module
 │   │   ├── urls.py                # Root URLs (+ /api/v1/health/, OpenAPI schema)
 │   │   ├── pagination.py          # StandardPagination (page/page_size, max 100)
+│   │   ├── seo.py                 # robots.txt + sitemap.xml (verified orgs)
 │   │   ├── exceptions.py          # Error envelope handler
 │   │   └── wsgi.py
 │   ├── apps/
 │   │   ├── accounts/              # User model, register/login/refresh/logout/me
 │   │   ├── organizations/         # Organization, Stakeholder + org endpoints
 │   │   ├── submissions/           # Submission, Category, StatusUpdate
-│   │   │   ├── services.py        # Business logic (reference gen, transitions, stats)
+│   │   │   ├── services.py        # Business logic (reference gen, transitions, follow-ups, SLA, stats)
+│   │   │   ├── notifications.py   # Citizen lifecycle emails (after-commit, fail-safe)
+│   │   │   ├── public_urls.py     # /api/v1/public/* (landing-page stats, showcased stories)
 │   │   │   ├── validators.py      # Attachment validation (size/ext/magic bytes)
 │   │   │   ├── org_urls.py        # /api/v1/org/* convenience endpoints
 │   │   │   └── management/commands/seed_data.py
-│   │   ├── platform_admin/        # Superadmin dashboard: PlatformAuditLog + /api/v1/admin/*
+│   │   ├── platform_admin/        # Superadmin dashboard: PlatformAuditLog, ContactMessage + /api/v1/admin/*
 │   │   │   ├── permissions.py     # IsSuperAdmin (gates on User.is_superuser)
 │   │   │   └── services.py        # verify/activate org, block/promote user, platform_overview()
 │   │   └── ai_insights/           # AI classification/sujhav/reports — SubmissionInsight
@@ -86,7 +89,9 @@ gunaso/
 ├── frontend/gunaso-ui/
 │   ├── src/
 │   │   ├── api/                   # axios client (in-memory token + cookie refresh)
-│   │   ├── stores/                # Pinia: auth, organization, submission, admin, ui
+│   │   ├── stores/                # Pinia: auth, organization, submission, admin, ui, savedSubmissions
+│   │   ├── utils/map.js           # Shared Leaflet helpers (escapeHtml, pins, tiles, cluster loader)
+│   │   ├── content/faq.js         # FAQ copy (landing + /how-it-works)
 │   │   ├── router/                # Routes + auth guards
 │   │   ├── layouts/               # OrgLayout.vue, AdminLayout.vue
 │   │   ├── views/                 # Page components (incl. Admin*Page.vue — superadmin dashboard)
@@ -96,6 +101,7 @@ gunaso/
 │   └── nginx.conf                 # Internal SPA server (history fallback)
 ├── nginx/nginx.conf               # Central reverse proxy
 ├── docker-compose.yml             # postgres, redis, backend, frontend, nginx
+├── scripts/deploy.py              # Bare-metal deploy: checks, build, backup+migrate, restart, verify
 ├── .env.example                   # Compose stack env template
 ├── INSTRUCTION.md                 # Setup & run guide
 └── CLAUDE.md                      # This file
@@ -148,7 +154,25 @@ scanned a branch-specific QR code; `SET_NULL` on branch deletion), `category`,
 `submission_type` (`complaint|feedback|suggestion`), `title`, `description`,
 `attachment` (validated), `status`, `priority` (`low|medium|high|urgent`),
 `is_anonymous`, `citizen` (FK, null for guests), `citizen_name/email/phone`
-(blank when anonymous), `created_at`, `updated_at`, `resolved_at`.
+(blank when anonymous), `created_at`, `updated_at`, `resolved_at`,
+`followup_key_hash` (SHA-256 of the private follow-up key — see below),
+`satisfaction_score` (1–5) / `satisfaction_comment` / `satisfaction_at` (the
+citizen's rating of the outcome; only accepted once resolved/rejected/closed).
+
+**Private follow-up key:** the reference number is only a *locator* (public
+track page). On creation `services.issue_followup_key()` issues a random key,
+stores only its hash, and returns the raw key **once** — in the create
+response (`followup_key`) and the receipt email. The signed-in owner, or
+whoever holds the key, may reply (`citizen_reply`) and rate the outcome. The
+SPA carries the key in the URL **fragment** (`/track/GUN-…#key=…`) and sends
+it in the `X-Followup-Key` header (GET) or request body (POST) — never a query
+string, so it stays out of access logs. A reply made with a key never records
+`updated_by`, so anonymous cases can't be tied to the account that replied.
+
+**SLA / overdue:** `services.overdue_q()` / `is_overdue()` — still `submitted`
+after `SLA_RESPONSE_HOURS`, or open (`submitted|acknowledged|in_review|escalated`)
+past `SLA_RESOLUTION_DAYS`. Surfaced as `is_overdue` (serializer, track page),
+`overdue_count` (stats), `?overdue=true` (org queues). Nothing auto-escalates yet.
 
 **API field mapping:** the API exposes `type` (↔ `submission_type`) and
 `submitter_name/email/phone` (↔ `citizen_*`). `category` is written as a plain name
@@ -189,8 +213,24 @@ regardless of how large the range is (`apps/ai_insights/services.py`).
 
 ### StatusUpdate (`apps/submissions`)
 **Append-only audit log** — never updated or deleted (enforced in Django admin too).
-`submission`, `updated_by`, `old_status`, `new_status`, `note`, `created_at`.
-Serialized to the frontend as `timeline`.
+`submission`, `updated_by`, `kind`, `old_status`, `new_status`, `note`, `created_at`.
+Serialized to the frontend as `timeline`. `kind`:
+- `status_change` — written by `transition_status()`; emails the citizen.
+- `note` — a public staff reply (`add_staff_note`); emails the citizen.
+- `internal_note` — organization-only (`add_staff_note(internal=True)`); **stripped
+  from every citizen-facing/public serialization** (track, owner detail, `/my/`,
+  showcase, `/updates/` for non-insiders) and never emailed.
+- `citizen_reply` — the submitter's follow-up (`add_citizen_reply`); displayed as
+  the submission's identity (`Anonymous citizen` when anonymous), never the account.
+
+Pre-`kind` notes were backfilled as `internal_note` (migration 0006): the old
+composer promised "not visible to citizen" while the API actually exposed them.
+
+### ContactMessage (`apps/platform_admin`)
+Public contact form → superadmin inbox. `name`, `email`, `organization`, `topic`,
+`message`, `is_handled`/`handled_by`/`handled_at`. Honeypot field `website` on
+the create serializer silently drops bots. Optionally forwarded to
+`CONTACT_NOTIFY_EMAIL`.
 
 ### PlatformAuditLog (`apps/platform_admin`)
 **Append-only audit log** of every superadmin dashboard action (organization
@@ -246,7 +286,7 @@ All endpoints are under `/api/v1/`. OpenAPI docs: `/api/v1/schema/swagger-ui/`.
 | `GET /organizations/` | — | Verified orgs (paginated, `?search=`, `?category=`) |
 | `POST /organizations/` | Bearer | Register org (starts unverified; creator becomes org_admin) |
 | `GET /organizations/mine/` | Bearer | Org managed by current user |
-| `GET /organizations/locations/` | — | Unpaginated map payload: verified orgs with coordinates (+ rating when public) |
+| `GET /organizations/locations/` | — | Unpaginated map payload: verified orgs with HQ coordinates **or** a located branch; stats, logo, branch `code`s (for "file here") |
 | `GET /organizations/{slug}/` | — | Public org profile |
 | `PATCH /organizations/{slug}/settings/` | org admin / `manage_org_profile` | Edit org profile fields, location, `show_rating` |
 | `GET/PUT/DELETE /organizations/{slug}/rating/` | Bearer | Current user's own 1–5 rating (PUT upserts) |
@@ -258,16 +298,20 @@ All endpoints are under `/api/v1/`. OpenAPI docs: `/api/v1/schema/swagger-ui/`.
 | `GET /categories/` | — | Categories (`?org=`, `?org_slug=`) |
 | `POST /submissions/` | — (throttled) | Create submission (guests allowed) |
 | `GET /submissions/my/` | Bearer | Own submissions |
-| `GET /submissions/track/{ref}/` | — | Public tracking (contact details never included) |
-| `GET /submissions/{ref}/` | owner/org admin/staff | Full detail |
-| `PATCH /submissions/{ref}/status/` | org admin | Validated status transition |
-| `GET/POST /submissions/{ref}/updates/` | participants / org admin | Audit trail / staff note |
+| `GET /submissions/track/{ref}/` | — | Public tracking (no contact details, no internal notes); `X-Followup-Key` header → `can_follow_up` |
+| `POST /submissions/track/{ref}/reply/` | owner or follow-up key (throttled) | Citizen follow-up `{message, key?}`; 403 for wrong/unknown alike, 409 when closed |
+| `POST /submissions/track/{ref}/feedback/` | owner or follow-up key (throttled) | Rate the outcome `{score 1–5, comment?, key?}`; 409 before resolved/rejected/closed |
+| `GET /submissions/{ref}/` | owner / org admin / `view_submissions` / platform staff | Full detail |
+| `PATCH /submissions/{ref}/status/` | `manage_submissions` | Validated status transition |
+| `PATCH /submissions/{ref}/assign/` | `assign_submissions` | `{staff_id}`; `null` unassigns |
+| `GET/POST /submissions/{ref}/updates/` | GET: owner / `view_submissions`; POST: `manage_submissions` | Audit trail / staff reply or `{internal: true}` note |
 | `PATCH /submissions/{ref}/category/` | `manage_submissions` | Manual categorization |
 | `POST /submissions/{ref}/ai-classify/` | `manage_submissions` (throttled) | AI classification (apps.ai_insights); 503 if AI unconfigured, 502 on AI failure |
 | `POST /submissions/{ref}/ai-suggestion/` | `manage_submissions` (throttled) | AI सुझाव — bilingual resolution suggestion; same 503/502 contract |
-| `GET /org/submissions/`, `GET /org/stats/` | org admin | Dashboard convenience endpoints |
+| `GET /org/submissions/`, `GET /org/stats/` | `view_submissions` / `view_stats` | Dashboard convenience endpoints. Queues: `?open=`, `?overdue=`, `?awaiting_reply=`, `?assigned_to=me\|none` |
+| `GET /org/submissions/export/` | `view_submissions` | CSV of the same filters (≤10k rows); anonymity + contact rules applied, formula-injection neutralized |
 | `GET/POST /org/ai-reports/` | `view_stats` (throttled) | List / generate bilingual period reports (`{date_from, date_to}`) |
-| `GET /org/map-feed/` | `view_submissions` | Branches with coordinates + a rolling window of recent branch-linked submission excerpts, for the animated branch map |
+| `GET /org/map-feed/` | `view_submissions` | Branch hotspot map: per-branch open/overdue/resolved/by-type counts + recent excerpts, `?days=7\|30\|90` window |
 | `GET /admin/overview/` | superadmin | Platform-wide analytics (orgs/users/submissions totals, 30-day trend) |
 | `GET /admin/organizations/` | superadmin | Every organization, verified or not (paginated, `?search=`, `?is_verified=`, `?is_active=`) |
 | `PATCH /admin/organizations/{slug}/` | superadmin | Verify/unverify and/or activate/deactivate an organization |
@@ -277,6 +321,11 @@ All endpoints are under `/api/v1/`. OpenAPI docs: `/api/v1/schema/swagger-ui/`.
 | `POST /admin/users/{id}/promote/`, `.../demote/` | superadmin | Grant/revoke superadmin (`is_staff` + `is_superuser`) |
 | `GET /admin/submissions/` | superadmin | Cross-organization submission feed, incl. anonymous submitter identity |
 | `GET /admin/audit-log/` | superadmin | Append-only record of every superadmin action (`PlatformAuditLog`) |
+| `GET /admin/contact-messages/`, `PATCH .../{id}/` | superadmin | Contact-form inbox; mark `{is_handled}` |
+| `POST /contact/` | — (throttled, honeypot) | Public contact form |
+| `GET /public/stats/` | — | Aggregate, identity-free platform numbers (verified orgs; cached 5 min) |
+| `GET /public/stories/` | — | Recent `is_public` cases across verified orgs (track redaction) |
+| `GET /robots.txt`, `GET /sitemap.xml` | — | SEO (served by Django; URLs use `FRONTEND_URL`) |
 | `GET /health/` | — | DB-checking liveness probe |
 
 ### Conventions
@@ -318,6 +367,28 @@ All endpoints are under `/api/v1/`. OpenAPI docs: `/api/v1/schema/swagger-ui/`.
   (`stores/onboarding.js`); it is not account data and has no backend field.
 - Login/Register push `onboardingStore.postAuthRoute(user)` after auth; an explicit
   `?redirect=` query on login takes precedence.
+
+### Public site & citizen flow
+
+- Marketing pages: `/` (LandingPage), `/for-organizations`, `/how-it-works` (+ `#faq`),
+  `/contact`, `/privacy`, `/terms` (LegalPage — describe real behaviour only), 404.
+  Route `meta.title/description` drive `document.title` + meta description.
+  Landing stats never fake numbers: below 10 submissions the band shows product facts.
+- `/track/:ref?` — progress stepper, "what happens next", reply box and outcome
+  rating when `can_follow_up`. Reads `#key=` from the fragment, stores it in the
+  device-local `savedSubmissions` store, then strips it from the address bar.
+- Submit success screen shows the reference **and** the private follow-up link.
+  Anonymous submits don't send the (possibly pre-filled) identity fields.
+- `/map` — clustered HQ + branch pins, search, category chips, near-me, sort,
+  popups that deep-link into `/submit/:slug?branch=<code>`. Mobile: Map/List toggle.
+
+### Maps
+
+All Leaflet code goes through `src/utils/map.js`. **Anything interpolated into
+Leaflet HTML (tooltips, popups, divIcons) must pass through `escapeHtml`** — Leaflet
+renders strings as raw HTML, so this is the map equivalent of the no-`v-html` rule.
+Dark mode inverts OSM tiles in CSS (no second tile provider). `leaflet.markercluster`
+is UMD and needs a global `L` — load it only via `loadClusterPlugin()`.
 
 ### Design system
 
@@ -418,6 +489,12 @@ the last remaining superadmin cannot be demoted.
   no need to wait out the access token's lifetime) and blacklists every outstanding refresh
   token for that user as defense in depth.
 - Unhandled exceptions return an opaque 500 envelope; details go to server logs only.
+- The private follow-up key is stored hashed, compared in constant time, and never
+  logged (fragment + header/body transport). Wrong key and unknown reference return
+  the same 403.
+- CSV exports prefix cells starting with `= + - @ \t \r` with `'` (formula injection).
+- Contact details of non-anonymous submitters go to the owner, platform staff, the org
+  admin and staff with `manage_submissions` — never to view-only staff.
 - **AI prompts never carry submitter identity.** `apps/ai_insights/client.py::_build_prompt`
   sends only `submission_type`/`title`/`description` (plus the org's existing category
   names) to the Anthropic API — never `citizen_name`/`citizen_email`/`citizen_phone`,
@@ -432,7 +509,7 @@ the last remaining superadmin cannot be demoted.
 ```bash
 cd backend/gunaso-api
 .venv/Scripts/activate          # Windows (source .venv/bin/activate on Unix)
-pytest                          # runs 300+ tests
+pytest                          # runs 400+ tests
 ```
 
 - pytest + pytest-django; fixtures in `conftest.py`. AAA structure.
@@ -452,7 +529,9 @@ Root `.env` (Docker stack — see `.env.example`): `DEBUG`, `SECRET_KEY`, `JWT_S
 run disabled without it), optional `EMAIL_*`.
 
 Backend-only extras: `DATABASE_URL`, `REDIS_URL`, `JWT_*_LIFETIME_*`, `THROTTLE_*`,
-`LOG_LEVEL`, `DB_CONN_MAX_AGE`, `STAFF_INVITE_EXPIRY_DAYS` (default 7 — how long a staff
+`LOG_LEVEL`, `DB_CONN_MAX_AGE`, `NOTIFICATIONS_ASYNC` (default True; tests set False),
+`SLA_RESPONSE_HOURS` (72), `SLA_RESOLUTION_DAYS` (30), `CONTACT_NOTIFY_EMAIL`,
+`THROTTLE_FOLLOWUP` (20/hour), `THROTTLE_CONTACT` (5/hour), `STAFF_INVITE_EXPIRY_DAYS` (default 7 — how long a staff
 invite link stays valid; see `apps/organizations/services.py`), `AI_CLASSIFICATION_MODEL`
 (default `claude-opus-4-8`).
 
@@ -475,7 +554,8 @@ a `${VAR:-default}` fallback: they're optional in `.env`, and an unset compose v
 arrives as an empty string, which would otherwise override the settings defaults and break
 the int/bool casts.
 
-Frontend: `VITE_API_BASE_URL` (keep it `/api/v1`).
+Frontend: `VITE_API_BASE_URL` (keep it `/api/v1`); `VITE_SITE_URL` (build-time, default
+`https://gunaaso.com`) — absolute origin for `og:image`/JSON-LD in `index.html`.
 
 When adding a new env var: document it in `.env.example` **and** here.
 
@@ -501,7 +581,8 @@ Tailwind utilities over custom CSS; no `console.log` in committed code.
 - Real-time updates via Django Channels (WebSockets)
 - Async tasks via Celery (+ Beat: SLA auto-escalation, digest emails)
 - Departments, routing rules engine, stakeholder assignments
-- Email/SMS notifications on status changes
+- SMS notifications (email lifecycle notifications exist — `apps/submissions/notifications.py`)
+- SLA auto-escalation job (overdue is only *flagged* today)
 - TypeScript migration + Vitest suite for the frontend
 - S3 media storage, ClamAV upload scanning
-- Frontend anonymous-session tokens for tracking guest submissions in one place
+- Cross-device guest tracking (today: device-local `savedSubmissions` + emailed private link)

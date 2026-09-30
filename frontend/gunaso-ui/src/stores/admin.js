@@ -32,6 +32,37 @@ export const useAdminStore = defineStore('admin', () => {
   const auditLogError = ref(null)
   const auditLogCount = ref(0)
 
+  const inbox = ref([])
+  const inboxLoading = ref(false)
+  const inboxError = ref(null)
+  const inboxCount = ref(0)
+
+  async function fetchInbox(params = {}) {
+    inboxLoading.value = true
+    inboxError.value = null
+    try {
+      const { data } = await adminAPI.listContactMessages(params)
+      inbox.value = data.results || data
+      inboxCount.value = data.count ?? inbox.value.length
+    } catch (err) {
+      inboxError.value = apiErrorMessage(err, 'Could not load the inbox.')
+      inbox.value = []
+      inboxCount.value = 0
+    } finally {
+      inboxLoading.value = false
+    }
+  }
+
+  async function setMessageHandled(id, handled) {
+    const { data } = await adminAPI.setContactMessageHandled(id, handled)
+    const idx = inbox.value.findIndex((m) => m.id === id)
+    if (idx !== -1) inbox.value[idx] = data
+    if (overview.value?.inbox) {
+      overview.value.inbox.unhandled = Math.max(0, overview.value.inbox.unhandled + (handled ? -1 : 1))
+    }
+    return data
+  }
+
   async function fetchOverview() {
     overviewLoading.value = true
     overviewError.value = null
@@ -168,5 +199,6 @@ export const useAdminStore = defineStore('admin', () => {
     fetchUsers, blockUser, unblockUser, promoteUser, demoteUser,
     submissions, submissionsLoading, submissionsError, submissionsCount, fetchSubmissions,
     auditLog, auditLogLoading, auditLogError, auditLogCount, fetchAuditLog,
+    inbox, inboxLoading, inboxError, inboxCount, fetchInbox, setMessageHandled,
   }
 })

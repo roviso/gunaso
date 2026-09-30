@@ -1,0 +1,22 @@
+{% autoescape off %}Hi {{ name }},
+
+Your gunaso has been recorded and sent to {{ organization }}{% if branch %} ({{ branch }} branch){% endif %}.
+
+  Reference number: {{ reference }}
+  Subject: {{ title }}
+
+YOUR PRIVATE FOLLOW-UP LINK
+{{ private_link }}
+
+Use this link to check progress, reply to the organization, and rate the
+outcome once it's resolved. Keep it to yourself — anyone with this link can
+follow up on your behalf. The reference number on its own only lets people
+see the public status.
+
+What happens next
+  1. {{ organization }} is expected to acknowledge it within {{ response_hours }} hours.
+  2. Every status change is recorded on a timeline that can't be edited or erased.
+  3. We'll email you whenever the status changes or the organization replies.
+
+— The {{ site_name }} team
+{% endautoescape %}

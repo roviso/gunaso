@@ -76,6 +76,10 @@ services:
       EMAIL_TIMEOUT: ${EMAIL_TIMEOUT:-15}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
       PASSWORD_RESET_TIMEOUT: ${PASSWORD_RESET_TIMEOUT:-86400}
+      NOTIFICATIONS_ASYNC: ${NOTIFICATIONS_ASYNC:-True}
+      SLA_RESPONSE_HOURS: ${SLA_RESPONSE_HOURS:-72}
+      SLA_RESOLUTION_DAYS: ${SLA_RESOLUTION_DAYS:-30}
+      CONTACT_NOTIFY_EMAIL: ${CONTACT_NOTIFY_EMAIL:-}
     volumes:
       - static_files:/app/staticfiles
       - media_files:/app/media

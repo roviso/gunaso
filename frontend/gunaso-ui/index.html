@@ -4,15 +4,59 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Gunaso — Nepal's Civic Grievance Platform. Submit complaints and feedback to organizations and track resolution progress." />
+    <meta name="description" content="File a complaint, feedback or suggestion to any registered organization in Nepal in under two minutes — anonymously if you want — and track it on a public, tamper-proof timeline until it is resolved." />
     <meta name="theme-color" content="#1D3557" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0f1f38" media="(prefers-color-scheme: dark)" />
-    <title>Gunaso — Your Voice Matters</title>
+    <title>Gunaso — Every gunaso deserves an answer</title>
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Social cards -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Gunaso" />
+    <meta property="og:title" content="Gunaso — Every gunaso deserves an answer" />
+    <meta property="og:description" content="File a complaint to any organization in Nepal in two minutes — anonymously if you want — and track it to a documented answer." />
+    <meta property="og:image" content="__SITE_URL__/static/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:locale:alternate" content="ne_NP" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Gunaso — Every gunaso deserves an answer" />
+    <meta name="twitter:description" content="File a complaint to any organization in Nepal in two minutes and track it to a documented answer." />
+    <meta name="twitter:image" content="__SITE_URL__/static/og-image.png" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "name": "Gunaso",
+            "alternateName": "गुनासो",
+            "url": "__SITE_URL__/",
+            "inLanguage": ["en", "ne"]
+          },
+          {
+            "@type": "Organization",
+            "name": "Gunaso",
+            "url": "__SITE_URL__/",
+            "logo": "__SITE_URL__/static/og-image.png",
+            "description": "Nepal's civic grievance platform for citizen complaints, feedback and suggestions."
+          }
+        ]
+      }
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Public+Sans:ital,wght@0,300..900;1,400..700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Noto+Sans+Devanagari:wght@400..800&family=Public+Sans:ital,wght@0,300..900;1,400..700&display=swap" rel="stylesheet" />
   </head>
   <body>
+    <noscript>
+      <div style="padding:24px;font-family:system-ui,sans-serif;max-width:560px;margin:40px auto;text-align:center">
+        <strong>Gunaso needs JavaScript to run.</strong>
+        <p>Please enable JavaScript in your browser to file or track a gunaso.</p>
+      </div>
+    </noscript>
     <div id="app"></div>
     <script type="module" src="/src/main.js"></script>
   </body>

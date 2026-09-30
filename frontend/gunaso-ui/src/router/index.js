@@ -1,14 +1,50 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
+const SITE_NAME = 'Gunaso'
+const DEFAULT_DESCRIPTION =
+  'File a complaint, feedback or suggestion to any registered organization in Nepal in under two minutes — ' +
+  'anonymously if you want — and track it on a public, tamper-proof timeline until it is resolved.'
+
 const routes = [
-  { path: '/', name: 'Home', component: () => import('@/views/LandingPage.vue') },
-  { path: '/organizations', name: 'Organizations', component: () => import('@/views/OrganizationsPage.vue') },
-  { path: '/organizations/:slug', name: 'OrganizationDetail', component: () => import('@/views/OrganizationDetailPage.vue') },
-  { path: '/map', name: 'OrganizationsMap', component: () => import('@/views/OrganizationsMapPage.vue') },
-  { path: '/submit', name: 'Submit', component: () => import('@/views/SubmitPage.vue') },
-  { path: '/submit/:orgSlug', name: 'SubmitForOrg', component: () => import('@/views/SubmitPage.vue') },
-  { path: '/track', name: 'Track', component: () => import('@/views/TrackPage.vue') },
+  {
+    path: '/', name: 'Home', component: () => import('@/views/LandingPage.vue'),
+    meta: { title: 'Every gunaso deserves an answer', description: DEFAULT_DESCRIPTION }
+  },
+  {
+    path: '/organizations', name: 'Organizations', component: () => import('@/views/OrganizationsPage.vue'),
+    meta: { title: 'Organizations', description: 'Browse verified organizations on Gunaso — see how fast they resolve complaints and how citizens rate them.' }
+  },
+  { path: '/organizations/:slug', name: 'OrganizationDetail', component: () => import('@/views/OrganizationDetailPage.vue'), meta: { title: 'Organization' } },
+  {
+    path: '/map', name: 'OrganizationsMap', component: () => import('@/views/OrganizationsMapPage.vue'),
+    meta: { title: 'Map', description: 'Find the office or branch nearest to you and file a gunaso right from the map.', fullBleed: true }
+  },
+  {
+    path: '/submit', name: 'Submit', component: () => import('@/views/SubmitPage.vue'),
+    meta: { title: 'File a gunaso', description: 'Tell an organization what went wrong — no account needed, anonymous if you prefer.' }
+  },
+  { path: '/submit/:orgSlug', name: 'SubmitForOrg', component: () => import('@/views/SubmitPage.vue'), meta: { title: 'File a gunaso' } },
+  {
+    // :ref is optional so /track keeps working; the private follow-up key,
+    // when present, rides in the URL fragment (#key=...) — never sent to servers.
+    path: '/track/:ref?', name: 'Track', component: () => import('@/views/TrackPage.vue'),
+    meta: { title: 'Track your gunaso', description: 'Check the status of your gunaso with its GUN- reference number.' }
+  },
+  {
+    path: '/for-organizations', name: 'ForOrganizations', component: () => import('@/views/ForOrganizationsPage.vue'),
+    meta: { title: 'For organizations', description: 'Turn complaints into a service-improvement engine: branch QR codes, staff roles, SLA alerts, AI insights and a public trust score.' }
+  },
+  {
+    path: '/how-it-works', name: 'HowItWorks', component: () => import('@/views/HowItWorksPage.vue'),
+    meta: { title: 'How it works & FAQ', description: 'How Gunaso works for citizens and organizations, and answers to common questions about privacy and anonymity.' }
+  },
+  {
+    path: '/contact', name: 'Contact', component: () => import('@/views/ContactPage.vue'),
+    meta: { title: 'Contact us', description: 'Questions, partnerships, or bringing your organization to Gunaso — get in touch.' }
+  },
+  { path: '/privacy', name: 'Privacy', component: () => import('@/views/LegalPage.vue'), props: { page: 'privacy' }, meta: { title: 'Privacy policy' } },
+  { path: '/terms', name: 'Terms', component: () => import('@/views/LegalPage.vue'), props: { page: 'terms' }, meta: { title: 'Terms of use' } },
   {
     path: '/login', name: 'Login',
     component: () => import('@/views/LoginPage.vue'),
@@ -106,9 +142,10 @@ const routes = [
       { path: 'users', name: 'AdminUsers', component: () => import('@/views/AdminUsersPage.vue') },
       { path: 'submissions', name: 'AdminSubmissions', component: () => import('@/views/AdminSubmissionsPage.vue') },
       { path: 'audit-log', name: 'AdminAuditLog', component: () => import('@/views/AdminAuditLogPage.vue') },
+      { path: 'inbox', name: 'AdminInbox', component: () => import('@/views/AdminInboxPage.vue') },
     ]
   },
-  { path: '/:pathMatch(.*)*', redirect: '/' }
+  { path: '/:pathMatch(.*)*', name: 'NotFound', component: () => import('@/views/NotFoundPage.vue'), meta: { title: 'Page not found' } }
 ]
 
 const router = createRouter({
@@ -116,8 +153,28 @@ const router = createRouter({
   routes,
   scrollBehavior(to, from, savedPosition) {
     if (savedPosition) return savedPosition
-    return { top: 0, behavior: 'smooth' }
+    // In-page anchors (/how-it-works#faq) — but never the track page's
+    // #key=... fragment, which is a credential, not an element id.
+    if (to.hash && !to.hash.startsWith('#key=')) return { el: to.hash, top: 80, behavior: 'smooth' }
+    if (to.path === from.path) return false
+    return { top: 0 }
   }
+})
+
+function setMetaDescription(content) {
+  let tag = document.querySelector('meta[name="description"]')
+  if (!tag) {
+    tag = document.createElement('meta')
+    tag.setAttribute('name', 'description')
+    document.head.appendChild(tag)
+  }
+  tag.setAttribute('content', content)
+}
+
+router.afterEach((to) => {
+  const title = to.meta.title
+  document.title = title && to.name !== 'Home' ? `${title} · ${SITE_NAME}` : `${SITE_NAME} — ${title || 'Every gunaso deserves an answer'}`
+  setMetaDescription(to.meta.description || DEFAULT_DESCRIPTION)
 })
 
 router.beforeEach(async (to, _from, next) => {
