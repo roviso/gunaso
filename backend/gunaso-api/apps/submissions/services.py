@@ -1,13 +1,61 @@
 """Business logic for submissions, kept out of views and serializers."""
+import hashlib
+import hmac
 import secrets
+from datetime import timedelta
 
+from django.conf import settings
+from django.core.cache import cache
 from django.db import IntegrityError, transaction
+from django.db.models import Avg, Count, F, Q
 from django.utils import timezone
 
 from .models import Category, InvalidStatusTransitionError, StatusUpdate, Submission
 
 _REFERENCE_ATTEMPTS = 20
 _DERIVED_TITLE_MAX = 60
+
+ACTIVE_STATUSES = ('submitted', 'acknowledged', 'in_review', 'escalated')
+# Statuses in which the citizen may rate how their gunaso was handled.
+FEEDBACK_STATUSES = ('resolved', 'rejected', 'closed')
+
+
+class FollowUpError(Exception):
+    """A citizen follow-up (reply / satisfaction rating) that isn't allowed in
+    the submission's current state. Carries a user-safe message."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
+
+# ─── Private follow-up key ─────────────────────────────────────────────────────
+#
+# The reference number is only a *locator* — anyone holding it can read the
+# public track page, and its 5-digit space is small. Replying to a case or
+# rating its outcome needs a real capability, so every submission gets a
+# random key that is shown to the submitter exactly once (create response +
+# confirmation email) and stored only as a SHA-256 hash, like StaffInvite.
+
+def _hash_followup_key(raw_key: str) -> str:
+    return hashlib.sha256(raw_key.encode('utf-8')).hexdigest()
+
+
+def issue_followup_key(submission: Submission) -> str:
+    raw_key = secrets.token_urlsafe(24)
+    submission.followup_key_hash = _hash_followup_key(raw_key)
+    submission.save(update_fields=['followup_key_hash'])
+    return raw_key
+
+
+def has_followup_access(submission: Submission, user=None, raw_key: str = '') -> bool:
+    """The submitter may follow up: either the signed-in owner, or whoever
+    holds the private key. Constant-time comparison on the hash."""
+    if user is not None and user.is_authenticated and submission.citizen_id == user.id:
+        return True
+    if raw_key and submission.followup_key_hash:
+        return hmac.compare_digest(_hash_followup_key(raw_key), submission.followup_key_hash)
+    return False
 
 
 def derive_title(description: str) -> str:
@@ -61,15 +109,26 @@ def resolve_or_create_category(organization, name: str) -> Category:
 
 
 def create_submission(validated_data: dict, citizen=None) -> Submission:
-    """Create a submission with a collision-safe reference number."""
+    """Create a submission with a collision-safe reference number, issue its
+    private follow-up key and queue the confirmation email.
+
+    The raw key is attached as `submission.followup_key` for the create
+    response only — it is never persisted in plain form.
+    """
+    from .notifications import notify_submission_received
+
     for _ in range(_REFERENCE_ATTEMPTS):
         try:
             with transaction.atomic():
-                return Submission.objects.create(
+                submission = Submission.objects.create(
                     reference_number=generate_reference_number(),
                     citizen=citizen,
                     **validated_data,
                 )
+                raw_key = issue_followup_key(submission)
+            submission.followup_key = raw_key
+            notify_submission_received(submission, raw_key)
+            return submission
         except IntegrityError:
             continue
     raise IntegrityError('Could not allocate a unique reference number.')
@@ -94,22 +153,106 @@ def transition_status(submission: Submission, new_status: str, changed_by, note:
             submission.resolved_at = timezone.now()
             update_fields.append('resolved_at')
         submission.save(update_fields=update_fields)
-        StatusUpdate.objects.create(
+        update = StatusUpdate.objects.create(
             submission=submission,
             updated_by=changed_by,
+            kind=StatusUpdate.KIND_STATUS_CHANGE,
             old_status=old_status,
             new_status=new_status,
             note=note,
         )
+    from .notifications import notify_submission_update
+    notify_submission_update(submission, update)
     return submission
+
+
+def add_staff_note(submission: Submission, note: str, author, internal: bool = False) -> StatusUpdate:
+    """Append a staff reply (visible to the citizen, who is emailed) or an
+    internal note (organization-only, never emailed or shown publicly)."""
+    update = StatusUpdate.objects.create(
+        submission=submission,
+        updated_by=author,
+        kind=StatusUpdate.KIND_INTERNAL_NOTE if internal else StatusUpdate.KIND_NOTE,
+        old_status=submission.status,
+        new_status=submission.status,
+        note=note,
+    )
+    Submission.objects.filter(pk=submission.pk).update(updated_at=timezone.now())
+    if not internal:
+        from .notifications import notify_submission_update
+        notify_submission_update(submission, update)
+    return update
+
+
+def add_citizen_reply(submission: Submission, message: str, user=None) -> StatusUpdate:
+    """Append a follow-up from the submitter. Callers must have checked
+    `has_followup_access` first.
+
+    `updated_by` is only ever the signed-in *owner* — never whoever happens to
+    be signed in while using a key — so an anonymous submission can't be tied
+    back to an account through its replies.
+    """
+    if submission.status == 'closed':
+        raise FollowUpError('This case is closed. Please submit a new gunaso if the problem continues.')
+    author = user if (user is not None and user.is_authenticated and submission.citizen_id == user.id) else None
+    update = StatusUpdate.objects.create(
+        submission=submission,
+        updated_by=author,
+        kind=StatusUpdate.KIND_CITIZEN_REPLY,
+        old_status=submission.status,
+        new_status=submission.status,
+        note=message,
+    )
+    Submission.objects.filter(pk=submission.pk).update(updated_at=timezone.now())
+    return update
+
+
+def record_satisfaction(submission: Submission, score: int, comment: str = '') -> Submission:
+    """The citizen rates how their gunaso was handled (1–5). Only once the
+    organization has reached an outcome; re-rating overwrites."""
+    if submission.status not in FEEDBACK_STATUSES:
+        raise FollowUpError('You can rate the outcome once the organization has resolved or closed your case.')
+    submission.satisfaction_score = score
+    submission.satisfaction_comment = comment
+    submission.satisfaction_at = timezone.now()
+    submission.save(update_fields=['satisfaction_score', 'satisfaction_comment', 'satisfaction_at'])
+    return submission
+
+
+# ─── Service-level targets (SLA) ───────────────────────────────────────────────
+#
+# Global targets from settings; no background job escalates anything yet
+# (Celery Beat is on the roadmap) — overdue cases are surfaced to staff instead.
+
+def _sla_cutoffs(now=None):
+    now = now or timezone.now()
+    return (
+        now - timedelta(hours=settings.SLA_RESPONSE_HOURS),
+        now - timedelta(days=settings.SLA_RESOLUTION_DAYS),
+    )
+
+
+def overdue_q(now=None) -> Q:
+    """Unacknowledged past the response target, or still open past the
+    resolution target."""
+    response_cutoff, resolution_cutoff = _sla_cutoffs(now)
+    return (
+        Q(status='submitted', created_at__lt=response_cutoff)
+        | Q(status__in=ACTIVE_STATUSES, created_at__lt=resolution_cutoff)
+    )
+
+
+def is_overdue(submission: Submission, now=None) -> bool:
+    if submission.status not in ACTIVE_STATUSES:
+        return False
+    response_cutoff, resolution_cutoff = _sla_cutoffs(now)
+    if submission.status == 'submitted' and submission.created_at < response_cutoff:
+        return True
+    return submission.created_at < resolution_cutoff
 
 
 def organization_stats(organization) -> dict:
     """Aggregate dashboard metrics for one organization."""
-    from datetime import timedelta
-
-    from django.db.models import Avg, Count, F
-
     from apps.organizations.models import OrganizationStaff
 
     submissions = Submission.objects.filter(organization=organization)
@@ -200,10 +343,16 @@ def organization_stats(organization) -> dict:
         )
     ]
 
-    active_statuses = {'submitted', 'acknowledged', 'in_review', 'escalated'}
     unassigned_count = submissions.filter(
-        assigned_to__isnull=True, status__in=active_statuses
+        assigned_to__isnull=True, status__in=ACTIVE_STATUSES
     ).count()
+    overdue_count = submissions.filter(overdue_q(now)).count()
+
+    satisfaction = submissions.filter(satisfaction_score__isnull=False).aggregate(
+        avg=Avg('satisfaction_score'), count=Count('id'),
+    )
+    total = submissions.count()
+    closed_out = by_status.get('resolved', 0) + by_status.get('closed', 0)
 
     # Daily submission counts for the last 7 days.
     trend = []
@@ -217,7 +366,7 @@ def organization_stats(organization) -> dict:
 
     return {
         'organization': organization.name,
-        'total': submissions.count(),
+        'total': total,
         'pending': by_status.get('submitted', 0) + by_status.get('acknowledged', 0),
         'in_review': by_status.get('in_review', 0),
         'resolved': by_status.get('resolved', 0),
@@ -231,7 +380,63 @@ def organization_stats(organization) -> dict:
         'recent_activity': recent_activity,
         'staff_count': staff_count,
         'unassigned_count': unassigned_count,
+        'overdue_count': overdue_count,
+        'resolution_rate': round(closed_out * 100 / total) if total else 0,
+        'satisfaction_avg': round(float(satisfaction['avg']), 1) if satisfaction['avg'] is not None else None,
+        'satisfaction_count': satisfaction['count'],
+        'sla': {
+            'response_hours': settings.SLA_RESPONSE_HOURS,
+            'resolution_days': settings.SLA_RESOLUTION_DAYS,
+        },
         'trend': trend,
         'by_branch': by_branch,
         'by_category': by_category,
     }
+
+
+PUBLIC_STATS_CACHE_KEY = 'public-platform-stats'
+PUBLIC_STATS_CACHE_SECONDS = 300
+
+
+def public_platform_stats() -> dict:
+    """Aggregate, identity-free platform numbers for the landing page and
+    transparency sections. Counts only — never titles or content — and only
+    for verified, active organizations. Cached briefly: it runs on every
+    landing-page visit."""
+    cached = cache.get(PUBLIC_STATS_CACHE_KEY)
+    if cached is not None:
+        return cached
+
+    from apps.organizations.models import Branch, Organization
+
+    orgs = Organization.objects.filter(is_active=True, is_verified=True)
+    submissions = Submission.objects.filter(organization__in=orgs)
+    total = submissions.count()
+    closed_out = submissions.filter(status__in=['resolved', 'closed']).count()
+    avg_resolution = (
+        submissions.filter(resolved_at__isnull=False)
+        .annotate(duration=F('resolved_at') - F('created_at'))
+        .aggregate(avg=Avg('duration'))['avg']
+    )
+    satisfaction = submissions.filter(satisfaction_score__isnull=False).aggregate(
+        avg=Avg('satisfaction_score'), count=Count('id'),
+    )
+    since = timezone.now() - timedelta(days=30)
+
+    stats = {
+        'organizations': orgs.count(),
+        'branches': Branch.objects.filter(organization__in=orgs, is_active=True).count(),
+        'submissions': total,
+        'resolved': closed_out,
+        'resolution_rate': round(closed_out * 100 / total) if total else 0,
+        'in_progress': submissions.filter(status__in=ACTIVE_STATUSES).count(),
+        'submissions_last_30_days': submissions.filter(created_at__gte=since).count(),
+        'avg_resolution_days': round(avg_resolution.total_seconds() / 86400, 1) if avg_resolution else None,
+        'satisfaction_avg': round(float(satisfaction['avg']), 1) if satisfaction['avg'] is not None else None,
+        'satisfaction_count': satisfaction['count'],
+        'by_type': {
+            t: submissions.filter(submission_type=t).count() for t, _ in Submission.TYPE_CHOICES
+        },
+    }
+    cache.set(PUBLIC_STATS_CACHE_KEY, stats, PUBLIC_STATS_CACHE_SECONDS)
+    return stats

@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import PlatformAuditLog
+from .models import ContactMessage, PlatformAuditLog
 
 
 @admin.register(PlatformAuditLog)
@@ -17,3 +17,11 @@ class PlatformAuditLogAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+@admin.register(ContactMessage)
+class ContactMessageAdmin(admin.ModelAdmin):
+    list_display = ['name', 'email', 'topic', 'is_handled', 'created_at']
+    list_filter = ['topic', 'is_handled']
+    search_fields = ['name', 'email', 'organization', 'message']
+    readonly_fields = ['name', 'email', 'organization', 'topic', 'message', 'created_at']

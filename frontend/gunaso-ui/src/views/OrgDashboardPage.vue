@@ -64,20 +64,27 @@ const statusBreakdown = computed(() => {
 })
 
 const resolutionRate = computed(() => {
+  if (typeof s.value.resolution_rate === 'number' && s.value.total) return s.value.resolution_rate
   const total = s.value.total ?? 0
   if (!total) return null
   const done = (statusBreakdown.value.resolved || 0) + (statusBreakdown.value.closed || 0)
   return Math.round((done / total) * 100)
 })
 
+// Citizens whose follow-up hasn't been answered (from the loaded page).
+const awaitingReplyCount = computed(() => submissionStore.orgSubmissions.filter((x) => x.awaiting_reply).length)
+
 // ── Needs attention: active submissions, most urgent + oldest first ──────────
 const ACTIVE_STATUSES = new Set(['submitted', 'acknowledged', 'in_review', 'escalated'])
 const PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 }
 
+// Overdue first, then citizens waiting on a reply, then priority, then age.
 const needsAttention = computed(() =>
   submissionStore.orgSubmissions
-    .filter((sub) => ACTIVE_STATUSES.has(sub.status))
+    .filter((sub) => ACTIVE_STATUSES.has(sub.status) || sub.awaiting_reply)
     .sort((a, b) => {
+      if (a.is_overdue !== b.is_overdue) return a.is_overdue ? -1 : 1
+      if (a.awaiting_reply !== b.awaiting_reply) return a.awaiting_reply ? -1 : 1
       const p = (PRIORITY_ORDER[a.priority] ?? 9) - (PRIORITY_ORDER[b.priority] ?? 9)
       if (p !== 0) return p
       return new Date(a.created_at) - new Date(b.created_at)
@@ -122,7 +129,7 @@ const priorityRows = computed(() => breakdownRows(PRIORITY_META, s.value.by_prio
 // normalize to the shape ActivityFeed renders.
 const recentActivity = computed(() => {
   const fromTimelines = submissionStore.orgSubmissions.flatMap((sub) =>
-    (sub.timeline || []).map((t) => ({
+    (sub.timeline || []).filter((t) => !t.kind || t.kind === 'status_change').map((t) => ({
       new_status: t.status || t.new_status,
       note: t.note,
       created_at: t.created_at,
@@ -224,8 +231,32 @@ onMounted(loadData)
     </div>
 
     <template v-else>
+      <!-- Accountability alerts -->
+      <div v-if="s.overdue_count || awaitingReplyCount" class="grid sm:grid-cols-2 gap-3">
+        <RouterLink v-if="s.overdue_count" :to="{ name: 'OrgSubmissions', query: { queue: 'overdue' } }"
+          class="flex items-center gap-3 p-4 rounded-2xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/60 hover:shadow-md transition-shadow">
+          <span class="text-2xl" aria-hidden="true">⏰</span>
+          <div class="min-w-0">
+            <p class="text-sm font-bold text-red-800 dark:text-red-200">{{ s.overdue_count }} overdue case{{ s.overdue_count === 1 ? '' : 's' }}</p>
+            <p class="text-xs text-red-700/80 dark:text-red-300/80">
+              Not acknowledged within {{ s.sla?.response_hours }}h, or open past {{ s.sla?.resolution_days }} days. Citizens can see the delay.
+            </p>
+          </div>
+          <span class="ml-auto text-sm font-bold text-red-700 dark:text-red-300 shrink-0">Review →</span>
+        </RouterLink>
+        <RouterLink v-if="awaitingReplyCount" :to="{ name: 'OrgSubmissions', query: { queue: 'waiting' } }"
+          class="flex items-center gap-3 p-4 rounded-2xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/60 hover:shadow-md transition-shadow">
+          <span class="text-2xl" aria-hidden="true">💬</span>
+          <div class="min-w-0">
+            <p class="text-sm font-bold text-blue-900 dark:text-blue-100">{{ awaitingReplyCount }} citizen{{ awaitingReplyCount === 1 ? ' is' : 's are' }} waiting for a reply</p>
+            <p class="text-xs text-blue-800/80 dark:text-blue-200/80">They followed up and haven't heard back yet.</p>
+          </div>
+          <span class="ml-auto text-sm font-bold text-blue-700 dark:text-blue-200 shrink-0">Reply →</span>
+        </RouterLink>
+      </div>
+
       <!-- Stat cards — each links to the matching filtered view -->
-      <div class="grid grid-cols-2 xl:grid-cols-4 gap-4">
+      <div class="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
         <RouterLink to="/org/submissions" class="block rounded-2xl hover:shadow-md transition-shadow">
           <StatsCard label="Total Submissions" :value="s.total ?? 0" icon="📋" />
         </RouterLink>
@@ -246,7 +277,10 @@ onMounted(loadData)
             color="green"
             :sub="s.avg_resolution_days ? `Avg ${s.avg_resolution_days} days to resolve` : ''" />
         </RouterLink>
-        <RouterLink to="/org/submissions?assignee=unassigned" class="block rounded-2xl hover:shadow-md transition-shadow">
+        <RouterLink :to="{ name: 'OrgSubmissions', query: { queue: 'overdue' } }" class="block rounded-2xl hover:shadow-md transition-shadow">
+          <StatsCard label="Overdue" :value="s.overdue_count ?? 0" icon="⏰" :color="s.overdue_count ? 'orange' : 'green'" sub="Past response/resolution target" />
+        </RouterLink>
+        <RouterLink :to="{ name: 'OrgSubmissions', query: { queue: 'unassigned' } }" class="block rounded-2xl hover:shadow-md transition-shadow">
           <StatsCard label="Unassigned" :value="s.unassigned_count ?? 0" icon="👤" sub="Active, no owner" />
         </RouterLink>
         <RouterLink to="/org/submissions?status=resolved,closed" class="block rounded-2xl hover:shadow-md transition-shadow">
@@ -257,6 +291,14 @@ onMounted(loadData)
             color="green"
             sub="Resolved or closed" />
         </RouterLink>
+        <div class="block rounded-2xl">
+          <StatsCard
+            label="Citizen Satisfaction"
+            :value="s.satisfaction_avg != null ? `${s.satisfaction_avg} ★` : '—'"
+            icon="⭐"
+            color="green"
+            :sub="s.satisfaction_count ? `From ${s.satisfaction_count} rated outcome${s.satisfaction_count === 1 ? '' : 's'}` : 'No outcome ratings yet'" />
+        </div>
         <RouterLink v-if="canViewStaff" to="/org/staff" class="block rounded-2xl hover:shadow-md transition-shadow">
           <StatsCard label="Staff Members" :value="s.staff_count ?? 0" icon="🧑‍💼" sub="Manage your team" />
         </RouterLink>
@@ -282,9 +324,9 @@ onMounted(loadData)
         <div class="card p-5 lg:col-span-2">
           <div class="flex items-center justify-between mb-4">
             <h2 class="text-sm font-bold text-gray-800 dark:text-white">Needs Attention</h2>
-            <RouterLink to="/org/submissions?status=submitted,acknowledged,in_review,escalated"
+            <RouterLink :to="{ name: 'OrgSubmissions', query: { queue: 'open' } }"
               class="text-xs text-primary hover:underline font-medium">
-              View all active →
+              View all open →
             </RouterLink>
           </div>
 
@@ -306,6 +348,8 @@ onMounted(loadData)
                   <span class="font-mono">{{ sub.reference_number }}</span>
                   · waiting {{ ageDays(sub.created_at) }}
                   <span v-if="!sub.assigned_to"> · unassigned</span>
+                  <span v-if="sub.is_overdue" class="ml-1 px-1.5 rounded-full font-bold bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-300">Overdue</span>
+                  <span v-if="sub.awaiting_reply" class="ml-1 px-1.5 rounded-full font-bold bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-200">Citizen waiting</span>
                 </p>
               </div>
               <StatusBadge :status="sub.status" />

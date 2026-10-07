@@ -6,6 +6,9 @@ from django.http import JsonResponse
 from django.urls import include, path, re_path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from apps.core import views as core_views
+from apps.platform_admin.views import ContactMessageCreateView
+
+from .seo import robots_txt, sitemap_xml
 
 
 def health_check(request):
@@ -32,6 +35,10 @@ urlpatterns = [
     path('api/v1/submissions/', include('apps.submissions.urls')),
     path('api/v1/org/', include('apps.submissions.org_urls')),
     path('api/v1/admin/', include('apps.platform_admin.urls')),
+    path('api/v1/public/', include('apps.submissions.public_urls')),
+    path('api/v1/contact/', ContactMessageCreateView.as_view(), name='contact-create'),
+    path('robots.txt', robots_txt, name='robots-txt'),
+    path('sitemap.xml', sitemap_xml, name='sitemap-xml'),
     path('api/v1/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/v1/schema/swagger-ui/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
 ]

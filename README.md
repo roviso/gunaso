@@ -16,7 +16,13 @@ Organizations register on the platform, define their internal departments and ro
 - **Validated status lifecycle** — `submitted → acknowledged → in_review → resolved / rejected (→ closed)`, with `escalated`; every change recorded in an append-only audit trail
 - **JWT authentication** — short-lived access tokens in memory, rotating refresh tokens in httpOnly cookies
 - **File attachments** — validated server-side (size, type, magic bytes)
-- **Org dashboard** — organization staff manage submissions through a clean Vue 3 interface
+- **Private follow-up link** — guests and anonymous submitters can reply to the organization and rate the outcome without an account
+- **Email notifications** — receipt, every status change and every staff reply (anonymous submitters are never emailed)
+- **Org dashboard** — work queues (open / overdue / citizen waiting / unassigned / mine), internal notes vs public replies, assignment, SLA overdue flags, satisfaction scores, CSV export
+- **Maps** — public clustered map of offices and branches with "near me" and file-from-the-pin; branch hotspot map for organizations
+- **Branch QR codes** — each branch's code tags incoming gunaso to that office
+- **AI assistance** — categorisation, bilingual reply suggestions, period reports (identity never sent to the model)
+- **Public site** — landing page with live platform stats, organizations page, how-it-works & FAQ, contact form (superadmin inbox), privacy & terms, sitemap/robots, social cards
 - **API docs** — OpenAPI schema with Swagger UI at `/api/v1/schema/swagger-ui/`
 
 See `INSTRUCTION.md` for setup and `CLAUDE.md` for the full architecture reference (including the roadmap: Channels, Celery, routing engine).

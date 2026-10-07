@@ -29,7 +29,7 @@ onMounted(async () => {
         </Transition>
       </RouterView>
     </main>
-    <AppFooter v-if="!route.meta.fullPage" />
+    <AppFooter v-if="!route.meta.fullPage && !route.meta.fullBleed" />
     <ToastNotification v-if="!route.meta.fullPage" />
   </div>
 </template>

@@ -1,10 +1,11 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useOrganizationStore } from '@/stores/organization'
 import { useSubmissionStore } from '@/stores/submission'
 import { useUIStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
+import { useSavedSubmissionsStore } from '@/stores/savedSubmissions'
 import { organizationsAPI } from '@/api/organizations'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 
@@ -14,12 +15,14 @@ const orgStore = useOrganizationStore()
 const submissionStore = useSubmissionStore()
 const uiStore = useUIStore()
 const authStore = useAuthStore()
+const savedSubmissions = useSavedSubmissionsStore()
 
 const currentStep = ref(1)
 const orgSearch = ref('')
 const selectedOrg = ref(null)
 const submissionResult = ref(null)
 const copied = ref(false)
+const copiedPrivate = ref(false)
 const attachmentLabel = ref('')
 
 const form = ref({
@@ -60,12 +63,15 @@ const categories = computed(() => {
   return ORG_CATEGORIES[selectedOrg.value.category] || ORG_CATEGORIES.default
 })
 
-const filteredOrgs = computed(() => {
-  const q = orgSearch.value.toLowerCase()
-  if (!q) return orgStore.organizations
-  return orgStore.organizations.filter(
-    (o) => o.name.toLowerCase().includes(q) || o.category.toLowerCase().includes(q)
-  )
+// Search runs server-side — the directory is paginated, so filtering only
+// the first page client-side would hide most organizations.
+const filteredOrgs = computed(() => orgStore.organizations)
+let searchTimer = null
+watch(orgSearch, (q) => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    orgStore.fetchOrganizations({ search: q.trim() || undefined, page_size: 50 })
+  }, 250)
 })
 
 const steps = [
@@ -85,12 +91,21 @@ function clearOrg() {
   form.value.category = ''
 }
 
+// Mirrors the server's MAX_ATTACHMENT_SIZE_MB so citizens hear about it
+// before uploading; the backend still enforces size, type and content.
+const MAX_ATTACHMENT_MB = 10
+
 function handleFileChange(e) {
   const file = e.target.files[0]
-  if (file) {
-    form.value.attachment = file
-    attachmentLabel.value = file.name
+  delete errors.value.attachment
+  if (!file) return
+  if (file.size > MAX_ATTACHMENT_MB * 1024 * 1024) {
+    errors.value.attachment = `That file is larger than ${MAX_ATTACHMENT_MB} MB.`
+    e.target.value = ''
+    return
   }
+  form.value.attachment = file
+  attachmentLabel.value = file.name
 }
 
 function validate() {
@@ -124,19 +139,52 @@ async function handleSubmit() {
       ...form.value,
       ...(branchCode.value ? { branch_code: branchCode.value } : {})
     }
+    // Anonymous means anonymous: don't send identity the citizen didn't
+    // consciously give (the fields may be pre-filled from their account).
+    if (payload.is_anonymous) {
+      delete payload.submitter_name
+      delete payload.submitter_email
+      delete payload.submitter_phone
+    }
     const result = await submissionStore.createSubmission(payload)
     submissionResult.value = result
+    savedSubmissions.save({
+      ref: result.reference_number,
+      key: result.followup_key,
+      organization: result.organization_name,
+      title: result.title,
+    })
     currentStep.value = 3
-    uiStore.showSuccess('Complaint submitted successfully!')
+    window.scrollTo({ top: 0 })
+    uiStore.showSuccess('Your gunaso is on the record.')
   } catch {
     uiStore.showError(submissionStore.error || 'Submission failed. Please try again.')
   }
 }
 
-async function copyReference() {
-  await navigator.clipboard.writeText(submissionResult.value.reference_number)
-  copied.value = true
-  setTimeout(() => (copied.value = false), 2000)
+const privateLink = computed(() => {
+  const r = submissionResult.value
+  if (!r) return ''
+  const base = `${window.location.origin}/track/${r.reference_number}`
+  return r.followup_key ? `${base}#key=${encodeURIComponent(r.followup_key)}` : base
+})
+
+async function copyText(text, flag) {
+  try {
+    await navigator.clipboard.writeText(text)
+    flag.value = true
+    setTimeout(() => (flag.value = false), 2000)
+  } catch {
+    uiStore.showError('Could not copy — please select and copy it manually.')
+  }
+}
+
+function copyReference() {
+  copyText(submissionResult.value.reference_number, copied)
+}
+
+function copyPrivateLink() {
+  copyText(privateLink.value, copiedPrivate)
 }
 
 function resetForm() {
@@ -159,7 +207,7 @@ const lockedSlug = computed(() => route.params.orgSlug || null)
 const isLocked = computed(() => !!lockedSlug.value)
 
 onMounted(async () => {
-  await orgStore.fetchOrganizations()
+  await orgStore.fetchOrganizations({ page_size: 50 })
 
   // Route param takes priority (QR code flow)
   const slugParam = lockedSlug.value || route.query.org
@@ -206,8 +254,9 @@ onMounted(async () => {
     <!-- Page header -->
     <div class="bg-gradient-to-br from-secondary to-[#0f1f38] text-white py-10">
       <div class="page-container">
-        <h1 class="text-3xl font-extrabold mb-1">Submit Complaint / Feedback</h1>
-        <p class="text-blue-200 text-sm">Your submission is recorded and forwarded to the organization immediately.</p>
+        <p class="text-xs font-semibold uppercase tracking-[0.2em] text-primary-200 mb-2">गुनासो दर्ता</p>
+        <h1 class="text-3xl sm:text-4xl font-extrabold mb-1.5 tracking-tight">File a gunaso</h1>
+        <p class="text-blue-200 text-sm">Two minutes. No account needed. Anonymous if you want.</p>
       </div>
     </div>
 
@@ -424,7 +473,8 @@ onMounted(async () => {
                         </span>
                         <input type="file" class="sr-only" accept="image/*,.pdf,.doc,.docx" @change="handleFileChange" />
                       </label>
-                      <p class="text-xs text-gray-400 dark:text-gray-500 mt-1.5">Supported: JPG, PNG, PDF, DOC (max 5MB)</p>
+                      <p v-if="errors.attachment" class="field-error">{{ errors.attachment }}</p>
+                      <p class="text-xs text-gray-400 dark:text-gray-500 mt-1.5">Images, PDF or Word documents (max {{ MAX_ATTACHMENT_MB }} MB)</p>
                     </div>
                   </div>
                 </Transition>
@@ -482,7 +532,7 @@ onMounted(async () => {
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
                   </svg>
-                  {{ submissionStore.loading ? 'Submitting...' : 'Submit Complaint' }}
+                  {{ submissionStore.loading ? 'Submitting…' : 'Submit gunaso' }}
                 </button>
               </div>
             </form>
@@ -490,57 +540,89 @@ onMounted(async () => {
         </div>
 
         <!-- ===== STEP 3: SUCCESS ===== -->
-        <div v-else-if="currentStep === 3 && submissionResult" class="card p-8 text-center">
-          <!-- Success icon -->
-          <div class="w-20 h-20 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-6">
-            <svg class="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
-            </svg>
-          </div>
-
-          <h2 class="text-2xl font-extrabold text-gray-900 dark:text-white mb-2">Complaint Submitted!</h2>
-          <p class="text-gray-500 dark:text-gray-400 text-sm mb-8">
-            Your complaint has been submitted to <span class="font-semibold text-gray-900 dark:text-white">{{ submissionResult.organization_name || selectedOrg?.name }}</span><span v-if="submissionResult.branch_name"> ({{ submissionResult.branch_name }} branch)</span> and is now pending review.
-          </p>
-
-          <!-- Reference number -->
-          <div class="bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-2xl p-6 mb-6">
-            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2 font-medium uppercase tracking-wider">Your Reference Number</p>
-            <p class="text-3xl font-extrabold text-secondary dark:text-white font-mono tracking-widest mb-4">
-              {{ submissionResult.reference_number }}
-            </p>
-            <button @click="copyReference"
-              :class="['w-full py-2.5 rounded-xl text-sm font-semibold border transition-all duration-200 flex items-center justify-center gap-2',
-                copied ? 'bg-green-500 border-green-500 text-white' : 'border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:border-primary hover:text-primary dark:hover:text-primary']">
-              <svg v-if="!copied" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
-              </svg>
-              <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div v-else-if="currentStep === 3 && submissionResult" class="space-y-5 animate-fade-up">
+          <div class="card p-7 sm:p-9 text-center">
+            <div class="w-20 h-20 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-6 animate-scale-in">
+              <svg class="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
               </svg>
-              {{ copied ? 'Copied!' : 'Copy Reference Number' }}
-            </button>
+            </div>
+            <h2 class="text-2xl sm:text-3xl font-extrabold text-gray-900 dark:text-white mb-2">Your gunaso is on the record</h2>
+            <p class="text-gray-500 dark:text-gray-400 text-sm max-w-md mx-auto">
+              Sent to <span class="font-semibold text-gray-900 dark:text-white">{{ submissionResult.organization_name || selectedOrg?.name }}</span><span v-if="submissionResult.branch_name"> ({{ submissionResult.branch_name }} branch)</span>.
+              Every step from here is time-stamped on a timeline nobody can edit.
+            </p>
+
+            <div class="mt-7 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-2xl p-5">
+              <p class="text-xs text-gray-500 dark:text-gray-400 mb-1.5 font-semibold uppercase tracking-wider">Reference number</p>
+              <p class="text-2xl sm:text-3xl font-extrabold text-secondary dark:text-white font-mono tracking-widest select-all">
+                {{ submissionResult.reference_number }}
+              </p>
+              <button @click="copyReference"
+                :class="['mt-3 inline-flex items-center gap-1.5 text-sm font-semibold transition-colors', copied ? 'text-green-600' : 'text-primary hover:underline']">
+                {{ copied ? '✓ Copied' : 'Copy reference' }}
+              </button>
+            </div>
           </div>
 
-          <p class="text-xs text-gray-500 dark:text-gray-400 mb-6">
-            Save this reference number to track your complaint status at any time.
-          </p>
+          <!-- Private follow-up link -->
+          <div v-if="submissionResult.followup_key" class="card p-6 border-2 !border-primary/20">
+            <div class="flex items-start gap-3">
+              <div class="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>
+                </svg>
+              </div>
+              <div class="min-w-0 flex-1">
+                <h3 class="font-bold text-gray-900 dark:text-white">Your private follow-up link</h3>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                  The reference lets anyone see the status. This link lets <strong>only you</strong> reply to the organization and
+                  rate the outcome{{ submissionResult.is_anonymous ? ' — without ever revealing who you are' : '' }}.
+                  <template v-if="!submissionResult.is_anonymous && form.submitter_email"> We've also emailed it to {{ form.submitter_email }}.</template>
+                  <template v-else> It's saved in this browser — copy it somewhere safe too.</template>
+                </p>
+                <div class="mt-3 flex flex-col sm:flex-row gap-2">
+                  <input :value="privateLink" readonly aria-label="Private follow-up link"
+                    class="input-base !py-2.5 font-mono text-xs flex-1 min-w-0" @focus="$event.target.select()" />
+                  <button @click="copyPrivateLink"
+                    :class="['btn-secondary !py-2.5 !px-4 text-sm shrink-0', copiedPrivate ? '!border-green-500 !text-green-600' : '']">
+                    {{ copiedPrivate ? '✓ Copied' : 'Copy link' }}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
 
-          <!-- Actions -->
+          <!-- What happens next -->
+          <div class="card p-6">
+            <h3 class="font-bold text-gray-900 dark:text-white mb-4">What happens next</h3>
+            <ol class="space-y-3.5">
+              <li v-for="(step, i) in [
+                'The organization is notified right away and is expected to acknowledge your gunaso within a few days.',
+                'Every status change and reply is added to your case history — permanently.',
+                !submissionResult.is_anonymous && form.submitter_email ? 'We email you whenever something changes.' : 'Check back any time with your reference number.',
+                'Once it’s resolved, tell them how they did. Ratings are part of their public record.',
+              ]" :key="i" class="flex gap-3 text-sm text-gray-600 dark:text-gray-300">
+                <span class="w-6 h-6 rounded-full bg-secondary text-white text-xs font-bold flex items-center justify-center shrink-0">{{ i + 1 }}</span>
+                <span class="pt-0.5">{{ step }}</span>
+              </li>
+            </ol>
+          </div>
+
           <div class="flex flex-col sm:flex-row gap-3">
-            <RouterLink :to="{ name: 'Track', query: { ref: submissionResult.reference_number } }"
-              class="btn-primary flex-1 justify-center py-3">
-              Track This Complaint
+            <RouterLink :to="{ name: 'Track', params: { ref: submissionResult.reference_number } }"
+              class="btn-primary flex-1 justify-center py-3.5">
+              Open my case
             </RouterLink>
-            <button @click="resetForm" class="btn-secondary flex-1 py-3">Submit Another</button>
+            <button @click="resetForm" class="btn-secondary flex-1 py-3.5">File another gunaso</button>
           </div>
 
-          <div v-if="!authStore.isAuthenticated" class="mt-5 p-4 bg-secondary/5 dark:bg-secondary/15 border border-secondary/10 rounded-xl">
+          <div v-if="!authStore.isAuthenticated" class="p-5 bg-secondary/5 dark:bg-secondary/20 border border-secondary/10 rounded-2xl text-center">
             <p class="text-sm text-gray-700 dark:text-gray-300">
-              <span class="font-semibold">Create a free account</span> to track all your submissions in one place.
+              <span class="font-semibold">Create a free account</span> to keep all your cases in one dashboard.
             </p>
             <RouterLink to="/register" class="text-primary text-sm font-semibold hover:underline mt-1 inline-block">
-              Register now →
+              Create account →
             </RouterLink>
           </div>
         </div>

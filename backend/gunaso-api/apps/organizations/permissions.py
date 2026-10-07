@@ -105,3 +105,30 @@ def require_privilege(privilege):
 
     _BoundHasOrgPrivilege.__name__ = f'HasOrgPrivilege_{privilege}'
     return _BoundHasOrgPrivilege
+
+
+def org_privileges_for(user, org) -> frozenset:
+    """Every privilege `user` holds on `org`, as a set of keys — the whole
+    catalog for the org admin and platform staff (same implicit-insider rule
+    as HasOrgPrivilege), the role's privileges for an active staff member,
+    empty for anyone else.
+
+    For serializers that need several privilege answers per object: one
+    query per (user, org) instead of one per HasOrgPrivilege check.
+    """
+    from .privileges import STAFF_PRIVILEGE_KEYS
+
+    if not (user and user.is_authenticated):
+        return frozenset()
+    if org.admin_id == user.id or user.is_staff:
+        return frozenset(STAFF_PRIVILEGE_KEYS)
+    staff = (
+        OrganizationStaff.objects.filter(
+            organization=org, user=user, status='active', is_active=True,
+        )
+        .select_related('role')
+        .first()
+    )
+    if staff is None or staff.role is None:
+        return frozenset()
+    return frozenset(staff.role.privileges or [])

@@ -34,8 +34,10 @@ export default {
         'app-bg': '#F8F9FA'
       },
       fontFamily: {
-        sans: ['"Public Sans"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-        display: ['"Bricolage Grotesque"', '"Public Sans"', 'ui-sans-serif', 'system-ui', 'sans-serif']
+        // Noto Sans Devanagari only supplies glyphs the Latin fonts lack, so
+        // Nepali text renders consistently instead of depending on the OS.
+        sans: ['"Public Sans"', '"Noto Sans Devanagari"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        display: ['"Bricolage Grotesque"', '"Public Sans"', '"Noto Sans Devanagari"', 'ui-sans-serif', 'system-ui', 'sans-serif']
       },
       boxShadow: {
         card: '0 1px 3px 0 rgb(0 0 0 / 0.07), 0 1px 2px -1px rgb(0 0 0 / 0.05)',

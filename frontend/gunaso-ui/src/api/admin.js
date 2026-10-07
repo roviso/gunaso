@@ -18,4 +18,8 @@ export const adminAPI = {
 
   listSubmissions: (params) => api.get('/admin/submissions/', { params }),
   listAuditLog: (params) => api.get('/admin/audit-log/', { params }),
+
+  // Public contact-form inbox.
+  listContactMessages: (params) => api.get('/admin/contact-messages/', { params }),
+  setContactMessageHandled: (id, isHandled) => api.patch(`/admin/contact-messages/${id}/`, { is_handled: isHandled }),
 }

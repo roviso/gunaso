@@ -7,6 +7,7 @@ export const useSubmissionStore = defineStore('submission', () => {
   const submissions = ref([])
   const currentSubmission = ref(null)
   const orgSubmissions = ref([])
+  const orgSubmissionsCount = ref(0)
   const orgStats = ref(null)
   const loading = ref(false)
   const error = ref(null)
@@ -30,12 +31,12 @@ export const useSubmissionStore = defineStore('submission', () => {
     }
   }
 
-  async function fetchByReference(reference) {
+  async function fetchByReference(reference, key = '') {
     loading.value = true
     error.value = null
     currentSubmission.value = null
     try {
-      const { data } = await submissionsAPI.track(reference)
+      const { data } = await submissionsAPI.track(reference, key)
       currentSubmission.value = data
     } catch (err) {
       error.value = apiErrorMessage(
@@ -68,6 +69,7 @@ export const useSubmissionStore = defineStore('submission', () => {
     try {
       const { data } = await submissionsAPI.orgSubmissions(params)
       orgSubmissions.value = data.results || data
+      orgSubmissionsCount.value = data.count ?? orgSubmissions.value.length
     } catch (err) {
       error.value = apiErrorMessage(err, 'Could not load organization submissions.')
       orgSubmissions.value = []
@@ -105,14 +107,37 @@ export const useSubmissionStore = defineStore('submission', () => {
     }
   }
 
-  async function addNote(reference, note) {
+  async function addNote(reference, note, internal = false) {
     try {
-      const { data } = await submissionsAPI.addNote(reference, note)
+      const { data } = await submissionsAPI.addNote(reference, note, internal)
+      // Re-read the case so the new entry shows in the panel's timeline and
+      // the list's awaiting-reply flag clears.
+      await refreshSubmission(reference)
       return data
     } catch (err) {
       error.value = apiErrorMessage(err, 'Failed to add note.')
       throw err
     }
+  }
+
+  async function refreshSubmission(reference) {
+    const { data } = await submissionsAPI.getByReference(reference)
+    _replace(reference, data)
+    return data
+  }
+
+  // Submitter follow-ups from the public track page. Errors are re-thrown
+  // for the page to show inline next to the form that caused them.
+  async function replyAsCitizen(reference, message, key) {
+    const { data } = await submissionsAPI.reply(reference, message, key)
+    currentSubmission.value = data
+    return data
+  }
+
+  async function rateOutcome(reference, score, comment, key) {
+    const { data } = await submissionsAPI.rateOutcome(reference, score, comment, key)
+    currentSubmission.value = data
+    return data
   }
 
   async function assignSubmission(reference, staffId) {
@@ -174,9 +199,9 @@ export const useSubmissionStore = defineStore('submission', () => {
   }
 
   return {
-    submissions, currentSubmission, orgSubmissions, orgStats, loading, error, statsError,
+    submissions, currentSubmission, orgSubmissions, orgSubmissionsCount, orgStats, loading, error, statsError,
     createSubmission, fetchByReference, fetchMySubmissions,
     fetchOrgSubmissions, fetchOrgStats, updateStatus, addNote, assignSubmission, setVisibility,
-    updateCategory, aiClassify, generateSujhav,
+    updateCategory, aiClassify, generateSujhav, refreshSubmission, replyAsCitizen, rateOutcome,
   }
 })

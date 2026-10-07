@@ -73,10 +73,17 @@ function formatDate(d) {
 const bgColors = ['bg-red-500', 'bg-blue-500', 'bg-violet-500', 'bg-emerald-500', 'bg-orange-500', 'bg-cyan-500']
 const logoBg = computed(() => bgColors[(orgStore.currentOrg?.id || 0) % bgColors.length])
 
+// The shared store list may include inactive branches when the viewer can
+// manage this org — the public profile only lists open offices.
+const publicBranches = computed(() => orgStore.branches.filter((b) => b.is_active))
+
 onMounted(async () => {
+  orgStore.branches = []
   await orgStore.fetchOrgBySlug(route.params.slug)
   if (orgStore.currentOrg) {
+    document.title = `${orgStore.currentOrg.name} · Gunaso`
     orgStore.fetchShowcase(route.params.slug)
+    orgStore.fetchBranches(route.params.slug)
     loadMyRating()
   }
 })
@@ -98,7 +105,9 @@ onMounted(async () => {
           </button>
 
           <div class="flex flex-col sm:flex-row items-start gap-5">
-            <div :class="['w-16 h-16 rounded-2xl flex items-center justify-center text-white font-extrabold text-2xl shrink-0', logoBg]">
+            <img v-if="orgStore.currentOrg.logo" :src="orgStore.currentOrg.logo" :alt="`${orgStore.currentOrg.name} logo`"
+              class="w-16 h-16 rounded-2xl object-cover shrink-0 border border-gray-100 dark:border-gray-700" />
+            <div v-else :class="['w-16 h-16 rounded-2xl flex items-center justify-center text-white font-extrabold text-2xl shrink-0', logoBg]">
               {{ orgStore.currentOrg.name[0] }}
             </div>
             <div class="flex-1">
@@ -130,13 +139,18 @@ onMounted(async () => {
                 {{ orgStore.currentOrg.website }}
               </a>
             </div>
-            <RouterLink :to="{ name: 'Submit', query: { org: orgStore.currentOrg.slug } }"
-              class="btn-primary shrink-0">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-              </svg>
-              Submit Complaint
-            </RouterLink>
+            <div class="flex flex-col gap-2 shrink-0">
+              <RouterLink :to="{ name: 'SubmitForOrg', params: { orgSlug: orgStore.currentOrg.slug } }" class="btn-primary">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                </svg>
+                File a gunaso
+              </RouterLink>
+              <RouterLink v-if="publicBranches.some((b) => b.latitude != null) || orgStore.currentOrg.latitude != null"
+                :to="{ name: 'OrganizationsMap', query: { org: orgStore.currentOrg.slug } }" class="btn-ghost text-sm justify-center">
+                📍 See on map
+              </RouterLink>
+            </div>
           </div>
         </div>
       </div>
@@ -157,8 +171,8 @@ onMounted(async () => {
               <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Resolution Rate</p>
             </div>
             <div class="px-4">
-              <p class="text-2xl font-extrabold text-secondary dark:text-white">{{ orgStore.currentOrg.avg_resolution_days }}d</p>
-              <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Avg. Response</p>
+              <p class="text-2xl font-extrabold text-secondary dark:text-white">{{ orgStore.currentOrg.avg_resolution_days ? `${orgStore.currentOrg.avg_resolution_days}d` : '—' }}</p>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Avg. days to resolve</p>
             </div>
             <div v-if="orgStore.currentOrg.average_rating != null" class="px-4">
               <p class="text-2xl font-extrabold text-amber-500">{{ orgStore.currentOrg.average_rating }}<span class="text-sm text-gray-400 font-semibold">/5</span></p>
@@ -194,6 +208,23 @@ onMounted(async () => {
               class="btn-secondary !px-4 !py-2 text-sm shrink-0">
               Sign in to rate
             </RouterLink>
+          </div>
+
+          <!-- Offices & branches: file straight to the right one -->
+          <div v-if="publicBranches.length" class="mb-10">
+            <h2 class="section-title mb-1">Offices & branches</h2>
+            <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">Filing for a specific office helps them find and fix the problem faster.</p>
+            <ul class="grid sm:grid-cols-2 gap-3">
+              <li v-for="b in publicBranches" :key="b.id" class="card p-4 flex items-start gap-3">
+                <span class="w-9 h-9 rounded-xl bg-secondary/[0.07] dark:bg-white/10 flex items-center justify-center shrink-0" aria-hidden="true">📍</span>
+                <div class="min-w-0 flex-1">
+                  <p class="font-semibold text-sm text-gray-900 dark:text-white">{{ b.name }}</p>
+                  <p v-if="b.address" class="text-xs text-gray-500 dark:text-gray-400 truncate">{{ b.address }}</p>
+                  <RouterLink :to="{ name: 'SubmitForOrg', params: { orgSlug: orgStore.currentOrg.slug }, query: { branch: b.code } }"
+                    class="text-xs font-bold text-primary hover:underline mt-1.5 inline-block">File a gunaso here →</RouterLink>
+                </div>
+              </li>
+            </ul>
           </div>
 
           <h2 class="section-title mb-1">Public Showcase</h2>

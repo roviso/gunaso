@@ -163,6 +163,9 @@ REST_FRAMEWORK = {
         'ai-classify': config('THROTTLE_AI_CLASSIFY', default='30/hour'),
         'ai-suggestion': config('THROTTLE_AI_SUGGESTION', default='20/hour'),
         'ai-report': config('THROTTLE_AI_REPORT', default='10/hour'),
+        # Citizen follow-ups (replies / outcome ratings) and the public contact form.
+        'followup': config('THROTTLE_FOLLOWUP', default='20/hour'),
+        'contact': config('THROTTLE_CONTACT', default='5/hour'),
     },
     'EXCEPTION_HANDLER': 'gunaso.exceptions.custom_exception_handler',
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
@@ -290,6 +293,21 @@ DEFAULT_FROM_EMAIL = (
     config('DEFAULT_FROM_EMAIL', default='') or EMAIL_HOST_USER or 'noreply@gunaso.local'
 )
 EMAIL_TIMEOUT = config('EMAIL_TIMEOUT', default=15, cast=int)
+
+# Citizen lifecycle emails (apps/submissions/notifications.py) are sent after
+# commit on a background thread so SMTP latency never blocks a request. Tests
+# turn this off to assert on mail.outbox synchronously.
+NOTIFICATIONS_ASYNC = config('NOTIFICATIONS_ASYNC', default=True, cast=bool)
+
+# Where public contact-form messages are also forwarded (optional — they are
+# always stored for the superadmin inbox either way).
+CONTACT_NOTIFY_EMAIL = config('CONTACT_NOTIFY_EMAIL', default='')
+
+# Service-level targets used to flag overdue cases for organizations: a
+# gunaso still 'submitted' after SLA_RESPONSE_HOURS, or still open after
+# SLA_RESOLUTION_DAYS, is overdue (apps/submissions/services.py::overdue_q).
+SLA_RESPONSE_HOURS = config('SLA_RESPONSE_HOURS', default=72, cast=int)
+SLA_RESOLUTION_DAYS = config('SLA_RESOLUTION_DAYS', default=30, cast=int)
 
 # Staff invite links (apps.organizations.services) expire after this many days.
 STAFF_INVITE_EXPIRY_DAYS = config('STAFF_INVITE_EXPIRY_DAYS', default=7, cast=int)
