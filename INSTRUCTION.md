@@ -196,3 +196,27 @@ Dev loop: `npm run android` opens Android Studio. Run on an emulator or a USB de
 On a Mac: `npm ci && npm run ios`, set the Team + bundle id `com.thimitech.gunaso` in Xcode
 (Signing & Capabilities), then Product → Archive → Distribute. App icons/splash are already generated
 (`npx capacitor-assets generate` from `assets/`).
+
+---
+
+## Deploying on the server (bare metal)
+
+Production runs gunicorn under `gunaso.service` behind nginx. Deploy the
+checked-out commit with:
+
+```bash
+sudo python3 scripts/deploy.py --dry-run   # read-only: checks + pending migrations
+sudo python3 scripts/deploy.py             # full deploy
+sudo python3 scripts/deploy.py --pull      # git pull --ff-only first
+```
+
+It runs the Django system check, refuses to deploy models without migrations,
+installs dependencies, builds the SPA and installs it into
+`backend/gunaso-api/frontend/`, runs `collectstatic`, takes a `pg_dump` backup
+(only when migrations are pending) into `.deploy/backups/`, migrates, restarts
+the service and verifies the API health endpoint, the SPA and its assets.
+
+- `--skip-frontend` for backend-only changes, `--skip-deps` to skip installs.
+- `--rollback-frontend` restores the previous SPA build (kept in `.deploy/frontend.prev`).
+- Database restore is deliberately manual: `pg_restore --clean --no-owner -d gunaso_db .deploy/backups/<file>.dump`.
+- Every run is appended to `.deploy/history.log`.

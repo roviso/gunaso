@@ -40,3 +40,39 @@ class PlatformAuditLog(models.Model):
 
     def __str__(self):
         return f'{self.get_action_display()}: {self.target_repr}'
+
+
+class ContactMessage(models.Model):
+    """A message sent through the public contact form — the superadmin inbox.
+
+    Unlike the audit logs this is a working queue: superadmins mark messages
+    handled once dealt with (the only mutable fields are the `handled_*` ones).
+    """
+
+    TOPIC_CHOICES = [
+        ('general', 'General question'),
+        ('organization', 'Bring my organization to Gunaso'),
+        ('support', 'Help with a submission'),
+        ('press', 'Press & partnerships'),
+        ('other', 'Something else'),
+    ]
+
+    name = models.CharField(max_length=200)
+    email = models.EmailField()
+    organization = models.CharField(max_length=255, blank=True)
+    topic = models.CharField(max_length=20, choices=TOPIC_CHOICES, default='general')
+    message = models.TextField()
+    is_handled = models.BooleanField(default=False)
+    handled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='handled_contact_messages',
+    )
+    handled_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name_plural = 'contact messages'
+
+    def __str__(self):
+        return f'{self.name} <{self.email}>: {self.get_topic_display()}'

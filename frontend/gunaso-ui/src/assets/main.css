@@ -96,3 +96,50 @@ html.native .app-full { padding-top: var(--safe-top); padding-bottom: var(--safe
 html.native .app-full .h-screen { height: calc(100vh - var(--safe-top) - var(--safe-bottom)); }
 /* Android resizes the WebView for the keyboard; keep the tab bar from riding up over forms. */
 html.native:has(input:not([type=checkbox]):not([type=radio]):focus, textarea:focus, select:focus) .tab-bar { display: none; }
+
+/* ── Maps (Leaflet renders outside Vue's scoped styles) ───────────────────── */
+@layer components {
+  /* Dark mode: invert the OSM raster instead of adding a second tile provider. */
+  .dark .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.88) saturate(0.7); }
+  .dark .leaflet-container { background: #111827; }
+  .leaflet-container { font-family: inherit; }
+  .dark .leaflet-control-attribution { background: rgb(17 24 39 / 0.8) !important; color: #9ca3af; }
+  .dark .leaflet-control-attribution a { color: #cbd5e1; }
+  .dark .leaflet-bar a { background: #1f2937; color: #e5e7eb; border-color: #374151; }
+
+  .gmap-pin, .gmap-dot { background: none; border: 0; }
+  .gmap-pin-inner { position: relative; transition: transform .2s cubic-bezier(0.22, 1, 0.36, 1); transform-origin: bottom center; filter: drop-shadow(0 3px 4px rgb(15 31 56 / 0.35)); }
+  .gmap-pin:hover .gmap-pin-inner, .gmap-pin-active { transform: scale(1.18); }
+  .gmap-pin-badge {
+    position: absolute; top: -6px; right: -8px; min-width: 18px; height: 18px; padding: 0 4px;
+    border-radius: 9999px; background: #1D3557; color: #fff; font-size: 10px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; border: 2px solid #fff;
+  }
+
+  /* Marker clusters */
+  .gmap-cluster { background: none; border: 0; }
+  .gmap-cluster > div {
+    width: 100%; height: 100%; border-radius: 9999px; display: flex; align-items: center; justify-content: center;
+    background: #E63946; color: #fff; font-weight: 800; font-size: 13px;
+    box-shadow: 0 0 0 6px rgb(230 57 70 / 0.22), 0 4px 12px rgb(15 31 56 / 0.3);
+  }
+
+  /* Rich popups */
+  .gmap-popup .leaflet-popup-content-wrapper { border-radius: 16px; padding: 0; box-shadow: 0 18px 40px -12px rgb(15 31 56 / 0.35); }
+  .gmap-popup .leaflet-popup-content { margin: 0; width: 260px !important; }
+  .dark .gmap-popup .leaflet-popup-content-wrapper, .dark .gmap-popup .leaflet-popup-tip { background: #1f2937; color: #f3f4f6; }
+
+  /* Hotspot pulse for the org branch map */
+  .gmap-hotspot { background: none; border: 0; }
+  .gmap-hotspot span { position: absolute; inset: 0; border-radius: 9999px; }
+  .gmap-hotspot .pulse { animation: gmap-pulse 2.4s ease-out infinite; }
+  @keyframes gmap-pulse {
+    0% { transform: scale(0.6); opacity: 0.55; }
+    100% { transform: scale(1.6); opacity: 0; }
+  }
+}
+
+@media print {
+  nav, footer, .no-print { display: none !important; }
+  body { background: #fff !important; }
+}

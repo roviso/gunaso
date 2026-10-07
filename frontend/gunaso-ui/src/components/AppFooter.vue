@@ -1,68 +1,61 @@
 <script setup>
+import BrandMark from '@/components/BrandMark.vue'
+
 const links = {
-  Platform: [
-    { label: 'Browse Organizations', to: '/organizations' },
-    { label: 'Submit Complaint', to: '/submit' },
-    { label: 'Track Complaint', to: '/track' },
-    { label: 'Register Organization', to: '/org/register' },
+  Citizens: [
+    { label: 'File a gunaso', to: '/submit' },
+    { label: 'Track a gunaso', to: '/track' },
+    { label: 'Organizations', to: '/organizations' },
+    { label: 'Map', to: '/map' },
+    { label: 'My dashboard', to: '/dashboard' },
   ],
-  Account: [
-    { label: 'Login', to: '/login' },
-    { label: 'Register', to: '/register' },
-    { label: 'My Submissions', to: '/dashboard' },
-    { label: 'Org Dashboard', to: '/org/dashboard' },
+  Organizations: [
+    { label: 'Why Gunaso', to: '/for-organizations' },
+    { label: 'Register your organization', to: '/org/register' },
+    { label: 'Organization dashboard', to: '/org/dashboard' },
+    { label: 'Book a walkthrough', to: { name: 'Contact', query: { topic: 'organization' } } },
   ],
-  Support: [
-    { label: 'How it Works', to: '/' },
-    { label: 'FAQ', to: '/' },
-    { label: 'Contact Us', to: '/' },
-    { label: 'Privacy Policy', to: '/' },
-  ]
+  Help: [
+    { label: 'How it works', to: '/how-it-works' },
+    { label: 'FAQ', to: '/how-it-works#faq' },
+    { label: 'Contact us', to: '/contact' },
+    { label: 'Privacy policy', to: '/privacy' },
+    { label: 'Terms of use', to: '/terms' },
+  ],
 }
 </script>
 
 <template>
   <footer class="bg-secondary dark:bg-gray-950 text-white">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 mb-10">
-        <!-- Brand -->
-        <div>
-          <div class="flex items-center gap-2 mb-4">
-            <div class="w-9 h-9 bg-primary rounded-lg flex items-center justify-center">
-              <span class="text-white font-extrabold">G</span>
-            </div>
-            <span class="text-xl font-extrabold tracking-tight">Gunaso</span>
-          </div>
-          <p class="text-blue-200 text-sm leading-relaxed mb-4">
-            Nepal's civic grievance platform. Submit complaints, track resolutions, hold institutions accountable.
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-14 pb-10">
+      <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-[1.4fr,1fr,1fr,1fr] gap-8 mb-12">
+        <div class="col-span-2 md:col-span-4 lg:col-span-1">
+          <BrandMark :size="36" inverted />
+          <p class="text-blue-200 text-sm leading-relaxed mt-4 max-w-xs">
+            Nepal’s civic grievance platform. File a gunaso, follow it to an answer, and hold institutions accountable — on the record.
           </p>
-          <p class="text-sm font-semibold text-primary-300 italic">"आफ्नो आवाज उठाउनुस्"</p>
+          <p class="text-sm font-semibold text-primary-300 italic mt-4">“आफ्नो आवाज उठाउनुस्”</p>
           <p class="text-xs text-blue-300 mt-1">Raise your voice.</p>
         </div>
 
-        <!-- Link Groups -->
-        <div v-for="(items, group) in links" :key="group">
-          <h4 class="font-bold text-sm text-white mb-4 uppercase tracking-wider">{{ group }}</h4>
+        <nav v-for="(items, group) in links" :key="group" :aria-label="group">
+          <h2 class="font-bold text-xs text-white/90 mb-4 uppercase tracking-[0.15em]">{{ group }}</h2>
           <ul class="space-y-2.5">
             <li v-for="item in items" :key="item.label">
-              <RouterLink :to="item.to" class="text-blue-200 hover:text-white text-sm transition-colors hover:underline">
+              <RouterLink :to="item.to" class="text-blue-200 hover:text-white text-sm transition-colors">
                 {{ item.label }}
               </RouterLink>
             </li>
           </ul>
-        </div>
+        </nav>
       </div>
 
-      <div class="pt-8 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-4">
-        <p class="text-blue-300 text-sm">
-          © {{ new Date().getFullYear() }} Gunaso. All rights reserved.
+      <div class="pt-8 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-blue-300">
+        <p>© {{ new Date().getFullYear() }} Gunaso. Free for citizens, always.</p>
+        <p class="flex items-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+          Anonymous submissions are never revealed to organizations.
         </p>
-        <div class="flex items-center gap-2">
-          <span class="inline-flex items-center gap-1.5 text-xs text-blue-300 bg-white/10 px-3 py-1.5 rounded-full">
-            <span class="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></span>
-            System Operational
-          </span>
-        </div>
       </div>
     </div>
   </footer>

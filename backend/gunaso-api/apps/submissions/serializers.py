@@ -1,8 +1,22 @@
 from rest_framework import serializers
 
 from .models import Category, StatusUpdate, Submission
-from .services import create_submission, derive_title, resolve_or_create_category
+from .services import create_submission, derive_title, is_overdue, resolve_or_create_category
 from .validators import validate_attachment
+
+
+def timeline_author(update: StatusUpdate) -> str:
+    """Display name for whoever wrote a timeline entry. A citizen follow-up is
+    labelled from the *submission's* identity rules, never from the account
+    that happened to be signed in — so an anonymous case stays anonymous."""
+    if update.kind == StatusUpdate.KIND_CITIZEN_REPLY:
+        submission = update.submission
+        if submission.is_anonymous:
+            return 'Anonymous citizen'
+        return submission.citizen_name or 'Citizen'
+    if update.updated_by:
+        return update.updated_by.get_full_name() or update.updated_by.username
+    return 'System'
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -17,19 +31,23 @@ class CategorySerializer(serializers.ModelSerializer):
 
 
 class TimelineEntrySerializer(serializers.ModelSerializer):
-    """One entry in a submission's public timeline."""
+    """One entry in a submission's timeline. `internal_note` entries are
+    stripped by the parent serializer for anyone outside the organization."""
 
     status = serializers.CharField(source='new_status', read_only=True)
+    previous_status = serializers.CharField(source='old_status', read_only=True)
     updated_by = serializers.SerializerMethodField()
 
     class Meta:
         model = StatusUpdate
-        fields = ['status', 'note', 'created_at', 'updated_by']
+        fields = ['id', 'kind', 'status', 'previous_status', 'note', 'created_at', 'updated_by']
 
     def get_updated_by(self, obj) -> str:
-        if obj.updated_by:
-            return obj.updated_by.get_full_name() or obj.updated_by.username
-        return 'System'
+        return timeline_author(obj)
+
+
+def _without_internal(timeline):
+    return [e for e in timeline if e.get('kind') != StatusUpdate.KIND_INTERNAL_NOTE]
 
 
 class SubmissionSerializer(serializers.ModelSerializer):
@@ -77,6 +95,8 @@ class SubmissionSerializer(serializers.ModelSerializer):
     assigned_to = serializers.SerializerMethodField()
     ai_insight = serializers.SerializerMethodField()
     ai_suggestion = serializers.SerializerMethodField()
+    is_overdue = serializers.SerializerMethodField()
+    awaiting_reply = serializers.SerializerMethodField()
 
     class Meta:
         model = Submission
@@ -87,12 +107,16 @@ class SubmissionSerializer(serializers.ModelSerializer):
             'status', 'priority', 'is_anonymous', 'is_public', 'assigned_to',
             'submitter_name', 'submitter_email', 'submitter_phone',
             'created_at', 'updated_at', 'resolved_at', 'timeline', 'ai_insight', 'ai_suggestion',
+            'is_overdue', 'awaiting_reply',
+            'satisfaction_score', 'satisfaction_comment', 'satisfaction_at',
         ]
         read_only_fields = [
             'id', 'reference_number', 'status', 'created_at', 'updated_at', 'resolved_at',
             # is_public is only ever changed via SubmissionVisibilityView
             # (privilege-gated) — never through a plain create/update.
             'is_public',
+            # Only the submitter sets these, through the follow-up endpoint.
+            'satisfaction_score', 'satisfaction_comment', 'satisfaction_at',
         ]
         extra_kwargs = {
             # Title is optional in the simplified "what is your gunaso?" submit
@@ -130,6 +154,27 @@ class SubmissionSerializer(serializers.ModelSerializer):
             'suggestion_english': suggestion.suggestion_english,
             'updated_at': suggestion.updated_at,
         }
+
+    def get_is_overdue(self, obj) -> bool:
+        return is_overdue(obj)
+
+    def get_awaiting_reply(self, obj) -> bool:
+        """The citizen spoke last: their follow-up hasn't been answered yet.
+        Reads the prefetched `updates` — no extra query on list views."""
+        public = [u for u in obj.updates.all() if u.kind != StatusUpdate.KIND_INTERNAL_NOTE]
+        return bool(public) and public[-1].kind == StatusUpdate.KIND_CITIZEN_REPLY
+
+    def _org_privileges(self, org) -> frozenset:
+        """The viewer's privileges on `org`, memoized in the serializer
+        context so a page of 20 submissions costs one lookup, not 20."""
+        from apps.organizations.permissions import org_privileges_for
+
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        memo = self.context.setdefault('_org_privileges', {})
+        if org.pk not in memo:
+            memo[org.pk] = org_privileges_for(user, org)
+        return memo[org.pk]
 
     def get_assigned_to(self, obj):
         if obj.assigned_to_id is None:
@@ -192,6 +237,16 @@ class SubmissionSerializer(serializers.ModelSerializer):
 
         request = self.context.get('request')
         user = getattr(request, 'user', None)
+        privileges = self._org_privileges(instance.organization)
+
+        # Internal staff notes never leave the organization.
+        if 'view_submissions' not in privileges and 'timeline' in data:
+            data['timeline'] = _without_internal(data['timeline'])
+
+        # Shown exactly once — in the create response — then only its hash exists.
+        followup_key = getattr(instance, 'followup_key', None)
+        if followup_key:
+            data['followup_key'] = followup_key
 
         if instance.is_anonymous:
             # Identity is never revealed to organizations — only platform staff.
@@ -204,13 +259,16 @@ class SubmissionSerializer(serializers.ModelSerializer):
                     data['submitter_phone'] = None
             return data
 
+        # Contact details go to whoever actually handles the case: the org
+        # admin, staff whose role can manage submissions, platform staff —
+        # and of course the submitter themselves.
         is_privileged = bool(
             user
             and user.is_authenticated
             and (
                 user.is_staff
                 or instance.citizen_id == user.id
-                or instance.organization.admin_id == user.id
+                or 'manage_submissions' in privileges
             )
         )
         if not is_privileged:
@@ -222,38 +280,81 @@ class SubmissionSerializer(serializers.ModelSerializer):
 
 
 class TrackSubmissionSerializer(SubmissionSerializer):
-    """Public tracking view — never includes submitter contact details."""
+    """Public tracking view — never includes submitter contact details or
+    internal staff notes, whoever is asking.
+
+    `can_follow_up` tells the page whether to offer the reply/rating
+    controls; the view sets `followup_access` in the context after checking
+    the viewer is the signed-in owner or holds the private key. The
+    citizen's own satisfaction comment is only echoed back to them.
+    """
+
+    can_follow_up = serializers.SerializerMethodField()
+    response_target_hours = serializers.SerializerMethodField()
 
     class Meta(SubmissionSerializer.Meta):
         fields = [
             'id', 'reference_number', 'organization', 'organization_name', 'org_slug',
+            'branch_name',
             'type', 'category', 'title', 'description', 'attachment',
             'status', 'priority', 'is_anonymous', 'submitter_name',
             'created_at', 'updated_at', 'resolved_at', 'timeline',
+            'satisfaction_score', 'satisfaction_comment', 'satisfaction_at',
+            'can_follow_up', 'response_target_hours', 'is_overdue',
         ]
+
+    def get_can_follow_up(self, obj) -> bool:
+        return bool(self.context.get('followup_access'))
+
+    def get_response_target_hours(self, obj) -> int:
+        from django.conf import settings
+        return settings.SLA_RESPONSE_HOURS
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
+        data['timeline'] = _without_internal(data.get('timeline', []))
         if instance.is_anonymous:
             data['submitter_name'] = 'Anonymous'
+        if not self.context.get('followup_access'):
+            data['satisfaction_comment'] = ''
         return data
 
 
 class StatusUpdateSerializer(serializers.ModelSerializer):
     updated_by_name = serializers.SerializerMethodField()
+    # Write-only switch for staff: an internal note is visible to the
+    # organization only and never emailed to the citizen.
+    internal = serializers.BooleanField(write_only=True, required=False, default=False)
 
     class Meta:
         model = StatusUpdate
         fields = [
-            'id', 'submission', 'updated_by', 'updated_by_name',
-            'old_status', 'new_status', 'note', 'created_at',
+            'id', 'submission', 'kind', 'updated_by', 'updated_by_name',
+            'old_status', 'new_status', 'note', 'created_at', 'internal',
         ]
         read_only_fields = [
-            'id', 'submission', 'updated_by', 'updated_by_name',
+            'id', 'submission', 'kind', 'updated_by', 'updated_by_name',
             'old_status', 'new_status', 'created_at',
         ]
+        extra_kwargs = {'note': {'required': True, 'allow_blank': False, 'max_length': 4000}}
 
     def get_updated_by_name(self, obj) -> str:
-        if obj.updated_by:
-            return obj.updated_by.get_full_name() or obj.updated_by.username
-        return 'System'
+        return timeline_author(obj)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Never expose which account wrote a citizen follow-up.
+        if instance.kind == StatusUpdate.KIND_CITIZEN_REPLY:
+            data['updated_by'] = None
+        return data
+
+
+class CitizenReplySerializer(serializers.Serializer):
+    key = serializers.CharField(required=False, allow_blank=True, max_length=100, write_only=True)
+    message = serializers.CharField(min_length=2, max_length=4000)
+
+
+class SatisfactionSerializer(serializers.Serializer):
+    key = serializers.CharField(required=False, allow_blank=True, max_length=100, write_only=True)
+    score = serializers.IntegerField(min_value=1, max_value=5)
+    comment = serializers.CharField(required=False, allow_blank=True, max_length=2000, default='')

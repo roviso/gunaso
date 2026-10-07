@@ -1,8 +1,9 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useUIStore } from '@/stores/ui'
+import BrandMark from '@/components/BrandMark.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -14,12 +15,16 @@ const userMenuOpen = ref(false)
 const userMenuRef = ref(null)
 
 const navLinks = [
-  { name: 'Home', to: '/' },
   { name: 'Organizations', to: '/organizations' },
   { name: 'Map', to: '/map' },
-  { name: 'Submit', to: '/submit' },
   { name: 'Track', to: '/track' },
+  { name: 'How it works', to: '/how-it-works' },
+  { name: 'For organizations', to: '/for-organizations' },
 ]
+
+const dashboardPath = computed(() =>
+  authStore.isSuperAdmin ? '/admin/overview' : authStore.hasOrgAccess ? '/org/dashboard' : '/dashboard'
+)
 
 function isActive(path) {
   if (path === '/') return route.path === '/'
@@ -49,17 +54,14 @@ onUnmounted(() => document.removeEventListener('mousedown', handleClickOutside))
       <div class="flex items-center justify-between h-16">
 
         <!-- Logo -->
-        <RouterLink to="/" class="flex items-center gap-2 shrink-0" @click="mobileOpen = false">
-          <div class="w-8 h-8 bg-primary rounded-lg flex items-center justify-center shadow-sm">
-            <span class="text-white font-display font-extrabold text-sm leading-none">G</span>
-          </div>
-          <span class="font-display font-bold text-lg text-secondary dark:text-white tracking-tight">Gunaso</span>
+        <RouterLink to="/" class="flex items-center shrink-0" aria-label="Gunaso home" @click="mobileOpen = false">
+          <BrandMark :size="32" />
         </RouterLink>
 
         <!-- Desktop Nav -->
-        <div class="hidden md:flex items-center gap-0.5">
+        <div class="hidden lg:flex items-center gap-0.5">
           <RouterLink v-for="link in navLinks" :key="link.to" :to="link.to"
-            :class="['px-4 py-2 rounded-lg text-sm font-medium transition-colors duration-150',
+            :class="['px-3.5 py-2 rounded-lg text-sm font-medium transition-colors duration-150',
               isActive(link.to)
                 ? 'bg-primary/10 text-primary'
                 : 'text-gray-600 dark:text-gray-300 hover:text-secondary dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800']">
@@ -84,15 +86,18 @@ onUnmounted(() => document.removeEventListener('mousedown', handleClickOutside))
             </svg>
           </button>
 
+          <!-- The one action that matters most, always one tap away -->
+          <RouterLink to="/submit"
+            class="hidden sm:inline-flex items-center gap-1.5 bg-primary hover:bg-primary-600 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors shadow-sm">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-width="2.5" d="M12 5v14M5 12h14"/></svg>
+            File a gunaso
+          </RouterLink>
+
           <!-- Guest buttons -->
           <template v-if="!authStore.isAuthenticated">
             <RouterLink to="/login"
               class="hidden sm:inline-flex text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-secondary dark:hover:text-white px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
-              Login
-            </RouterLink>
-            <RouterLink to="/register"
-              class="hidden sm:inline-flex bg-primary hover:bg-primary-600 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors shadow-sm">
-              Register
+              Sign in
             </RouterLink>
           </template>
 
@@ -121,7 +126,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleClickOutside))
                 </div>
                 <div class="py-1">
                   <RouterLink
-                    :to="authStore.hasOrgAccess ? '/org/dashboard' : '/dashboard'"
+                    :to="dashboardPath"
                     @click="userMenuOpen = false"
                     class="flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -144,7 +149,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleClickOutside))
           <!-- Hamburger -->
           <button @click="mobileOpen = !mobileOpen"
             :aria-label="mobileOpen ? 'Close menu' : 'Open menu'" :aria-expanded="mobileOpen"
-            class="md:hidden p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors ml-1">
+            class="lg:hidden p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors ml-1">
             <svg v-if="!mobileOpen" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
             </svg>
@@ -157,7 +162,11 @@ onUnmounted(() => document.removeEventListener('mousedown', handleClickOutside))
 
       <!-- Mobile Menu -->
       <Transition name="slide">
-        <div v-if="mobileOpen" class="md:hidden pb-4 border-t border-gray-100 dark:border-gray-800 mt-1">
+        <div v-if="mobileOpen" class="lg:hidden pb-4 border-t border-gray-100 dark:border-gray-800 mt-1">
+          <RouterLink to="/submit" @click="mobileOpen = false"
+            class="sm:hidden mt-3 flex items-center justify-center gap-1.5 bg-primary text-white text-sm font-semibold py-3 rounded-xl">
+            File a gunaso
+          </RouterLink>
           <div class="pt-3 space-y-0.5">
             <RouterLink v-for="link in navLinks" :key="link.to" :to="link.to" @click="mobileOpen = false"
               :class="['flex items-center px-3 py-2.5 rounded-xl text-sm font-medium transition-colors',
@@ -168,11 +177,11 @@ onUnmounted(() => document.removeEventListener('mousedown', handleClickOutside))
           <div v-if="!authStore.isAuthenticated" class="mt-4 flex gap-2 px-1">
             <RouterLink to="/login" @click="mobileOpen = false"
               class="flex-1 text-center py-2.5 border border-gray-200 dark:border-gray-600 rounded-xl text-sm font-semibold text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
-              Login
+              Sign in
             </RouterLink>
             <RouterLink to="/register" @click="mobileOpen = false"
-              class="flex-1 text-center py-2.5 bg-primary rounded-xl text-sm font-semibold text-white hover:bg-primary-600 transition-colors">
-              Register
+              class="flex-1 text-center py-2.5 bg-secondary rounded-xl text-sm font-semibold text-white hover:bg-secondary-800 transition-colors">
+              Create account
             </RouterLink>
           </div>
         </div>

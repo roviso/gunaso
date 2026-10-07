@@ -27,6 +27,8 @@ const canManageSubmissions = computed(() => authStore.hasPrivilege('manage_submi
 
 const statusUpdate = ref({ status: '', note: '' })
 const noteText = ref('')
+// 'reply' is shown to (and emailed to) the citizen; 'internal' never leaves the org.
+const noteMode = ref('reply')
 const assigneeId = ref('')
 const updatingStatus = ref(false)
 const addingNote = ref(false)
@@ -64,7 +66,8 @@ watch(() => props.submission, (sub) => {
   if (sub) {
     statusUpdate.value = { status: '', note: '' }
     noteText.value = ''
-    assigneeId.value = sub.assigned_to_id ? String(sub.assigned_to_id) : ''
+    noteMode.value = 'reply'
+    assigneeId.value = sub.assigned_to?.id ? String(sub.assigned_to.id) : ''
     categoryInput.value = sub.category || ''
     classifyError.value = ''
     sujhavError.value = ''
@@ -100,11 +103,12 @@ async function submitStatusUpdate() {
 async function submitNote() {
   if (!noteText.value.trim() || addingNote.value) return
   addingNote.value = true
+  const internal = noteMode.value === 'internal'
   try {
-    await submissionStore.addNote(props.submission.reference_number, noteText.value.trim())
-    uiStore.showSuccess('Note added.')
+    await submissionStore.addNote(props.submission.reference_number, noteText.value.trim(), internal)
+    uiStore.showSuccess(internal ? 'Internal note saved.' : 'Reply sent to the citizen.')
     noteText.value = ''
-    emit('updated')
+    emit('updated', submissionStore.orgSubmissions.find((s) => s.reference_number === props.submission.reference_number))
   } catch (err) {
     uiStore.showError(apiErrorMessage(err, 'Failed to add note.'))
   } finally {
@@ -203,6 +207,12 @@ const sentimentMeta = {
 }
 
 const typeIcon = { complaint: '⚠️', feedback: '💬', suggestion: '💡' }
+
+// Whether a public reply will actually reach the citizen's inbox — anonymous
+// submitters are never emailed, and guests may not have left an address.
+const citizenReachable = computed(() =>
+  !props.submission?.is_anonymous && !!props.submission?.submitter_email
+)
 </script>
 
 <template>
@@ -224,6 +234,14 @@ const typeIcon = { complaint: '⚠️', feedback: '💬', suggestion: '💡' }
                 </span>
                 <StatusBadge :status="submission.status" />
                 <PriorityBadge :priority="submission.priority" />
+                <span v-if="submission.is_overdue"
+                  class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300 border border-red-200 dark:border-red-800">
+                  ⏰ Overdue
+                </span>
+                <span v-if="submission.awaiting_reply"
+                  class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-secondary/10 text-secondary dark:bg-blue-900/30 dark:text-blue-200">
+                  💬 Citizen waiting
+                </span>
               </div>
               <h2 class="font-bold text-gray-900 dark:text-white leading-tight">{{ submission.title }}</h2>
               <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
@@ -248,6 +266,17 @@ const typeIcon = { complaint: '⚠️', feedback: '💬', suggestion: '💡' }
               <p class="text-sm text-gray-700 dark:text-gray-300 leading-relaxed bg-gray-50 dark:bg-gray-700/50 rounded-xl p-4">
                 {{ submission.description }}
               </p>
+            </div>
+
+            <!-- Citizen's verdict -->
+            <div v-if="submission.satisfaction_score" class="flex items-start gap-3 p-4 rounded-xl bg-amber-50 dark:bg-amber-900/15 border border-amber-100 dark:border-amber-800/60">
+              <div class="text-amber-500 text-lg leading-none tracking-tight" :aria-label="`${submission.satisfaction_score} out of 5`">
+                {{ '★'.repeat(submission.satisfaction_score) }}<span class="text-amber-200 dark:text-amber-800">{{ '★'.repeat(5 - submission.satisfaction_score) }}</span>
+              </div>
+              <div class="min-w-0">
+                <p class="text-xs font-semibold text-amber-800 dark:text-amber-300 uppercase tracking-wide">Citizen's rating of the outcome</p>
+                <p v-if="submission.satisfaction_comment" class="text-sm text-gray-700 dark:text-gray-200 mt-1">“{{ submission.satisfaction_comment }}”</p>
+              </div>
             </div>
 
             <!-- Contact -->
@@ -352,8 +381,8 @@ const typeIcon = { complaint: '⚠️', feedback: '💬', suggestion: '💡' }
                   <option v-for="s in allowedNextStatuses" :key="s.value" :value="s.value">{{ s.label }}</option>
                 </select>
                 <textarea v-model="statusUpdate.note" rows="2"
-                  placeholder="Optional note to citizen…"
-                  class="input-base resize-none" maxlength="500" />
+                  placeholder="Optional message to the citizen (shown on their timeline and emailed)…"
+                  class="input-base resize-none" maxlength="2000" />
                 <button @click="submitStatusUpdate"
                   :disabled="!statusUpdate.status || updatingStatus"
                   class="btn-primary w-full py-2.5 text-sm disabled:opacity-50">
@@ -384,16 +413,29 @@ const typeIcon = { complaint: '⚠️', feedback: '💬', suggestion: '💡' }
               </div>
             </div>
 
-            <!-- Add internal note -->
-            <div>
-              <h3 class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3">Add Internal Note</h3>
+            <!-- Conversation composer: public reply vs internal note -->
+            <div v-if="canManageSubmissions">
+              <div class="flex items-center gap-1 p-1 mb-3 rounded-xl bg-gray-100 dark:bg-gray-700/60 w-fit" role="tablist">
+                <button v-for="m in [{ v: 'reply', l: 'Reply to citizen' }, { v: 'internal', l: '🔒 Internal note' }]" :key="m.v"
+                  role="tab" :aria-selected="noteMode === m.v" @click="noteMode = m.v"
+                  :class="['px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors',
+                    noteMode === m.v ? 'bg-white dark:bg-gray-800 text-secondary dark:text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700']">
+                  {{ m.l }}
+                </button>
+              </div>
               <div class="space-y-2">
-                <textarea v-model="noteText" rows="2"
-                  placeholder="Internal note (not visible to citizen)…"
-                  class="input-base resize-none" maxlength="1000" />
+                <textarea v-model="noteText" rows="3"
+                  :placeholder="noteMode === 'reply' ? 'Write a reply the citizen will see on their timeline…' : 'Only your team will see this note…'"
+                  :class="['input-base resize-none', noteMode === 'internal' ? 'bg-amber-50/60 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800' : '']"
+                  maxlength="4000" />
+                <p class="text-[11px] text-gray-400 dark:text-gray-500">
+                  <template v-if="noteMode === 'internal'">Never shown to the citizen, never emailed, never on the public page.</template>
+                  <template v-else-if="citizenReachable">Appears on the citizen's timeline and is emailed to them.</template>
+                  <template v-else>Appears on the citizen's tracking page. {{ submission.is_anonymous ? 'Anonymous submitters are never emailed.' : 'They left no email, so they won\'t be notified.' }}</template>
+                </p>
                 <button @click="submitNote" :disabled="!noteText.trim() || addingNote"
-                  class="btn-secondary w-full py-2 text-sm disabled:opacity-50">
-                  {{ addingNote ? 'Adding…' : 'Add Note' }}
+                  :class="[noteMode === 'reply' ? 'btn-primary' : 'btn-secondary', 'w-full !py-2.5 text-sm disabled:opacity-50']">
+                  {{ addingNote ? 'Saving…' : noteMode === 'reply' ? 'Send reply' : 'Save internal note' }}
                 </button>
               </div>
             </div>
@@ -422,8 +464,8 @@ const typeIcon = { complaint: '⚠️', feedback: '💬', suggestion: '💡' }
 
             <!-- Timeline -->
             <div>
-              <h3 class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3">Status History</h3>
-              <SubmissionTimeline :timeline="submission.timeline || []" />
+              <h3 class="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-3">Case history</h3>
+              <SubmissionTimeline :timeline="submission.timeline || []" audience="org" />
             </div>
           </div>
         </div>

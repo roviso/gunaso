@@ -14,7 +14,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 
-from .models import PlatformAuditLog
+from .models import ContactMessage, PlatformAuditLog
 
 User = get_user_model()
 
@@ -153,4 +153,46 @@ def platform_overview() -> dict:
             'avg_resolution_days': avg_resolution_days,
         },
         'trend': trend,
+        'inbox': {
+            'unhandled': ContactMessage.objects.filter(is_handled=False).count(),
+        },
     }
+
+
+def submit_contact_message(data: dict) -> ContactMessage:
+    """Store a public contact-form message for the superadmin inbox and, if
+    CONTACT_NOTIFY_EMAIL is configured, forward a copy. Delivery failure is
+    logged, never surfaced — the message is already safely stored."""
+    import logging
+
+    from django.conf import settings
+    from django.core.mail import EmailMessage
+
+    message = ContactMessage.objects.create(**data)
+    notify_to = getattr(settings, 'CONTACT_NOTIFY_EMAIL', '')
+    if notify_to:
+        def send():
+            try:
+                EmailMessage(
+                    subject=f'[Gunaso contact] {message.get_topic_display()} — {message.name}',
+                    body=(
+                        f'From: {message.name} <{message.email}>\n'
+                        f'Organization: {message.organization or "—"}\n'
+                        f'Topic: {message.get_topic_display()}\n\n{message.message}\n'
+                    ),
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    to=[notify_to],
+                    reply_to=[message.email],
+                ).send(fail_silently=False)
+            except Exception:  # noqa: BLE001
+                logging.getLogger(__name__).exception('Failed to forward contact message %s', message.pk)
+        transaction.on_commit(send)
+    return message
+
+
+def set_contact_message_handled(message: ContactMessage, actor, handled: bool) -> ContactMessage:
+    message.is_handled = handled
+    message.handled_by = actor if handled else None
+    message.handled_at = timezone.now() if handled else None
+    message.save(update_fields=['is_handled', 'handled_by', 'handled_at'])
+    return message

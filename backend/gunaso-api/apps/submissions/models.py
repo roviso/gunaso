@@ -1,3 +1,4 @@
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
 from apps.accounts.models import User
@@ -103,6 +104,19 @@ class Submission(models.Model):
         blank=True,
         related_name='assigned_submissions',
     )
+    # SHA-256 of the private follow-up key handed to the submitter once, at
+    # creation (see services.issue_followup_key). The key is the only way a
+    # guest or anonymous submitter can reply or rate the outcome — only its
+    # hash is stored, so a DB leak can't be replayed against the API.
+    followup_key_hash = models.CharField(max_length=64, blank=True, editable=False)
+    # The citizen's verdict on how their gunaso was handled — only accepted
+    # once the case reached resolved/rejected/closed (services.record_satisfaction).
+    satisfaction_score = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+    )
+    satisfaction_comment = models.TextField(blank=True)
+    satisfaction_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
@@ -123,10 +137,28 @@ class Submission(models.Model):
 
 
 class StatusUpdate(models.Model):
-    """Append-only audit log of status changes. Records are never updated or deleted."""
+    """Append-only audit log of everything that happened on a submission —
+    status changes, staff replies, internal staff notes and citizen follow-ups.
+    Records are never updated or deleted.
+
+    `internal_note` entries are visible to the organization only — they are
+    filtered out of every citizen-facing and public serialization.
+    """
+
+    KIND_STATUS_CHANGE = 'status_change'
+    KIND_NOTE = 'note'
+    KIND_INTERNAL_NOTE = 'internal_note'
+    KIND_CITIZEN_REPLY = 'citizen_reply'
+    KIND_CHOICES = [
+        (KIND_STATUS_CHANGE, 'Status change'),
+        (KIND_NOTE, 'Staff reply'),
+        (KIND_INTERNAL_NOTE, 'Internal note'),
+        (KIND_CITIZEN_REPLY, 'Citizen follow-up'),
+    ]
 
     submission = models.ForeignKey(Submission, on_delete=models.CASCADE, related_name='updates')
     updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES, default=KIND_STATUS_CHANGE)
     old_status = models.CharField(max_length=50)
     new_status = models.CharField(max_length=50)
     note = models.TextField(blank=True)

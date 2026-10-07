@@ -1,7 +1,8 @@
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
-from rest_framework import generics
+from rest_framework import generics, permissions, status
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from apps.organizations.models import Organization, OrganizationStaff
@@ -9,10 +10,18 @@ from apps.organizations.serializers import OrganizationStaffSerializer
 from apps.organizations.views import org_queryset_with_counts
 
 from .permissions import IsSuperAdmin
-from .models import PlatformAuditLog
-from .serializers import AdminOrganizationSerializer, AdminUserSerializer, PlatformAuditLogSerializer
+from .models import ContactMessage, PlatformAuditLog
+from .serializers import (
+    AdminOrganizationSerializer,
+    AdminUserSerializer,
+    ContactMessageCreateSerializer,
+    ContactMessageSerializer,
+    PlatformAuditLogSerializer,
+)
 from .services import (
     block_user,
+    set_contact_message_handled,
+    submit_contact_message,
     demote_superadmin,
     platform_overview,
     promote_to_superadmin,
@@ -170,3 +179,47 @@ class AdminAuditLogListView(generics.ListAPIView):
 
     def get_queryset(self):
         return PlatformAuditLog.objects.select_related('actor')
+
+
+class ContactMessageCreateView(APIView):
+    """POST /contact/ — the public contact form (throttled; honeypot-filtered)."""
+
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'contact'
+
+    def post(self, request):
+        serializer = ContactMessageCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = dict(serializer.validated_data)
+        if data.pop('website', ''):
+            return Response({'detail': 'Thanks — we will get back to you soon.'}, status=status.HTTP_201_CREATED)
+        submit_contact_message(data)
+        return Response({'detail': 'Thanks — we will get back to you soon.'}, status=status.HTTP_201_CREATED)
+
+
+class AdminContactMessageListView(generics.ListAPIView):
+    """GET /admin/contact-messages/ — the superadmin inbox (?is_handled=, ?topic=, ?search=)."""
+
+    serializer_class = ContactMessageSerializer
+    permission_classes = [IsSuperAdmin]
+    filterset_fields = ['is_handled', 'topic']
+    search_fields = ['name', 'email', 'organization', 'message']
+
+    def get_queryset(self):
+        return ContactMessage.objects.select_related('handled_by')
+
+
+class AdminContactMessageDetailView(APIView):
+    """PATCH /admin/contact-messages/{id}/ — mark handled / unhandled ({is_handled})."""
+
+    permission_classes = [IsSuperAdmin]
+
+    def patch(self, request, message_id):
+        message = get_object_or_404(ContactMessage, pk=message_id)
+        handled = request.data.get('is_handled')
+        if not isinstance(handled, bool):
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'is_handled': 'This field is required and must be a boolean.'})
+        message = set_contact_message_handled(message, request.user, handled)
+        return Response(ContactMessageSerializer(message).data)

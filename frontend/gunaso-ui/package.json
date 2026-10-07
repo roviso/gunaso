@@ -22,6 +22,7 @@
     "axios": "^1.6.8",
     "chart.js": "^4.5.1",
     "leaflet": "^1.9.4",
+    "leaflet.markercluster": "^1.5.3",
     "pinia": "^2.1.7",
     "vue": "^3.4.21",
     "vue-router": "^4.3.0"

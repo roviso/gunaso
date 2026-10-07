@@ -31,7 +31,7 @@ onMounted(async () => {
         </Transition>
       </RouterView>
     </main>
-    <AppFooter v-if="!route.meta.fullPage && !isNative" />
+    <AppFooter v-if="!route.meta.fullPage && !route.meta.fullBleed && !isNative" />
     <MobileTabBar v-if="!route.meta.fullPage && isNative" />
     <ToastNotification v-if="!route.meta.fullPage" />
   </div>

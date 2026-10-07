@@ -5,6 +5,7 @@ import { useSubmissionStore } from '@/stores/submission'
 import StatusBadge from '@/components/StatusBadge.vue'
 import PriorityBadge from '@/components/PriorityBadge.vue'
 import SubmissionTimeline from '@/components/SubmissionTimeline.vue'
+import StatusProgress from '@/components/StatusProgress.vue'
 
 const authStore = useAuthStore()
 const submissionStore = useSubmissionStore()
@@ -40,6 +41,24 @@ const stats = computed(() => {
     { label: 'Resolved', value: subs.filter((s) => s.status === 'resolved').length, accent: 'text-green-600 dark:text-green-400' },
   ]
 })
+
+// What needs the citizen's action: the organization spoke last, or the case
+// has an outcome that hasn't been rated yet.
+function lastPublicEntry(sub) {
+  const entries = (sub.timeline || []).filter((e) => e.kind !== 'internal_note')
+  return entries[entries.length - 1]
+}
+
+const attention = computed(() => submissionStore.submissions.flatMap((sub) => {
+  const last = lastPublicEntry(sub)
+  if (['resolved', 'rejected', 'closed'].includes(sub.status) && !sub.satisfaction_score) {
+    return [{ sub, kind: 'rate', text: `${sub.organization_name} marked this ${sub.status === 'rejected' ? 'rejected' : 'resolved'} — how did they do?`, cta: 'Rate the outcome' }]
+  }
+  if (last && (last.kind === 'note' || (last.kind === 'status_change' && last.note)) && sub.status !== 'closed') {
+    return [{ sub, kind: 'reply', text: `${sub.organization_name} replied: “${last.note.length > 90 ? last.note.slice(0, 90) + '…' : last.note}”`, cta: 'Open & reply' }]
+  }
+  return []
+}))
 
 const greeting = computed(() => {
   const h = new Date().getHours()
@@ -80,7 +99,7 @@ onMounted(() => submissionStore.fetchMySubmissions())
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
             </svg>
-            New Complaint
+            File a gunaso
           </RouterLink>
         </div>
 
@@ -96,6 +115,26 @@ onMounted(() => submissionStore.fetchMySubmissions())
     </div>
 
     <div class="page-container py-8">
+      <!-- Needs your attention -->
+      <div v-if="attention.length" class="mb-6 card p-5 border-primary/20 bg-primary/[0.03] dark:bg-primary/10 animate-fade-up">
+        <h2 class="font-display font-bold text-secondary dark:text-white text-sm mb-3 flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-primary animate-pulse-dot" /> Needs your attention
+        </h2>
+        <ul class="space-y-2">
+          <li v-for="item in attention.slice(0, 5)" :key="item.sub.id"
+            class="flex items-center gap-3 flex-wrap sm:flex-nowrap p-3 rounded-xl bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700">
+            <span class="text-lg" aria-hidden="true">{{ item.kind === 'rate' ? '⭐' : '💬' }}</span>
+            <div class="min-w-0 flex-1">
+              <p class="text-sm font-semibold text-gray-900 dark:text-white truncate">{{ item.sub.title }}</p>
+              <p class="text-xs text-gray-500 dark:text-gray-400 truncate">{{ item.text }}</p>
+            </div>
+            <RouterLink :to="{ name: 'Track', params: { ref: item.sub.reference_number } }" class="btn-primary !py-2 !px-4 text-xs shrink-0">
+              {{ item.cta }}
+            </RouterLink>
+          </li>
+        </ul>
+      </div>
+
       <div class="flex flex-col lg:flex-row gap-6">
         <!-- List panel -->
         <div class="flex-1 min-w-0">
@@ -173,8 +212,12 @@ onMounted(() => submissionStore.fetchMySubmissions())
                 </div>
                 <StatusBadge :status="sub.status" />
               </div>
+              <div class="mb-3 px-1">
+                <StatusProgress :status="sub.status" :timeline="sub.timeline || []" compact />
+              </div>
               <div class="flex items-center gap-2 flex-wrap">
                 <span class="text-xs font-mono text-gray-400 dark:text-gray-500 bg-gray-50 dark:bg-gray-700/50 px-2 py-0.5 rounded">{{ sub.reference_number }}</span>
+                <span v-if="sub.satisfaction_score" class="text-xs font-bold text-amber-500">★ {{ sub.satisfaction_score }}/5</span>
                 <PriorityBadge :priority="sub.priority" />
                 <span class="text-xs text-gray-400 dark:text-gray-500 ml-auto">{{ formatDate(sub.created_at) }}</span>
               </div>
@@ -182,12 +225,12 @@ onMounted(() => submissionStore.fetchMySubmissions())
               <!-- Expanded timeline -->
               <Transition name="slide">
                 <div v-if="selectedSubmission?.id === sub.id" class="mt-5 pt-5 border-t border-gray-100 dark:border-gray-700" @click.stop>
-                  <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">Status History</p>
-                  <SubmissionTimeline :timeline="sub.timeline || []" />
-                  <div class="mt-4">
-                    <RouterLink :to="{ name: 'Track', query: { ref: sub.reference_number } }"
-                      class="text-xs text-primary font-medium hover:underline flex items-center gap-1">
-                      View full tracking page →
+                  <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4">Case history</p>
+                  <SubmissionTimeline :timeline="sub.timeline || []" :organization-name="sub.organization_name" />
+                  <div class="mt-5">
+                    <RouterLink :to="{ name: 'Track', params: { ref: sub.reference_number } }"
+                      class="btn-secondary !py-2 !px-4 text-xs">
+                      Open case — reply or rate →
                     </RouterLink>
                   </div>
                 </div>
@@ -214,7 +257,7 @@ onMounted(() => submissionStore.fetchMySubmissions())
           <div class="card p-5 bg-gradient-to-br from-primary/5 to-primary/10 border-primary/20">
             <h4 class="font-display font-bold text-gray-900 dark:text-white text-sm mb-2">Track by Reference</h4>
             <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">Have a reference number? Track it anonymously.</p>
-            <RouterLink to="/track" class="btn-primary w-full py-2 text-xs justify-center">Go to Track Page</RouterLink>
+            <RouterLink :to="{ name: 'Track' }" class="btn-primary w-full py-2 text-xs justify-center">Go to Track Page</RouterLink>
           </div>
         </div>
       </div>
