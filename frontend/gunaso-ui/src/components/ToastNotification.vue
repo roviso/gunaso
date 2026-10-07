@@ -23,7 +23,7 @@ function iconClass(type) {
 </script>
 
 <template>
-  <div class="fixed bottom-5 right-5 z-[100] flex flex-col gap-2.5 pointer-events-none max-w-sm w-full">
+  <div class="fixed bottom-5 [.native_&]:bottom-28 right-5 z-[100] flex flex-col gap-2.5 pointer-events-none max-w-sm w-full">
     <TransitionGroup name="toast">
       <div v-for="toast in uiStore.toasts" :key="toast.id"
         :class="['pointer-events-auto flex items-start gap-3 px-4 py-3.5 rounded-2xl shadow-xl border backdrop-blur-sm', toastClass(toast.type)]">

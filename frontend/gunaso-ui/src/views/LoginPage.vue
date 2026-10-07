@@ -157,13 +157,6 @@ onMounted(() => emailInput.value?.focus())
             <RouterLink to="/register" class="text-primary font-semibold hover:underline">Create one</RouterLink>
           </p>
         </div>
-
-        <!-- Demo hint -->
-        <div class="mt-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl p-3.5 text-center">
-          <p class="text-xs text-blue-700 dark:text-blue-300">
-            <span class="font-semibold">Demo:</span> citizen@gunaso.np / password123 &nbsp;|&nbsp; org@gunaso.np / password123
-          </p>
-        </div>
       </div>
     </div>
   </div>

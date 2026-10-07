@@ -128,3 +128,4 @@ $RECYCLE.BIN/
 # ──────────────────────────────────────────────
 logs/
 *.log
+!frontend/gunaso-ui/.env.mobile

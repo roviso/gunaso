@@ -76,3 +76,23 @@
   .stagger > *:nth-child(5) { animation-delay: 0.37s; }
   .stagger > *:nth-child(6) { animation-delay: 0.45s; }
 }
+
+/* ── Native app shell (Capacitor) ─────────────────────────────────────────
+   Android injects --safe-area-inset-* (Capacitor SystemBars); iOS has env(). */
+@layer utilities {
+  .pt-safe { padding-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px)); }
+  .pb-safe { padding-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)); }
+}
+
+html.native {
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+  --safe-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+}
+/* Full-page layouts (org/admin portals, onboarding) are h-screen flex shells:
+   pad the shell and shrink their h-screen to fit between the system bars. */
+html.native .app-full { padding-top: var(--safe-top); padding-bottom: var(--safe-bottom); }
+html.native .app-full .h-screen { height: calc(100vh - var(--safe-top) - var(--safe-bottom)); }
+/* Android resizes the WebView for the keyboard; keep the tab bar from riding up over forms. */
+html.native:has(input:not([type=checkbox]):not([type=radio]):focus, textarea:focus, select:focus) .tab-bar { display: none; }

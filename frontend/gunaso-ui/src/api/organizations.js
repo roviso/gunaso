@@ -1,4 +1,4 @@
-import api from './index'
+import api, { PUBLIC_ORIGIN } from './index'
 
 export const organizationsAPI = {
   list: (params) => api.get('/organizations/', { params }),
@@ -52,10 +52,10 @@ export const organizationsAPI = {
   // origin lets the backend encode the URL the visitor is actually browsing on
   // (e.g. an ngrok tunnel) instead of the configured FRONTEND_URL.
   getQRCode: (slug) => api.get(`/organizations/${slug}/qrcode/`, {
-    params: { format: 'base64', origin: window.location.origin },
+    params: { format: 'base64', origin: PUBLIC_ORIGIN },
   }),
   getBranchQRCode: (slug, branchId) => api.get(`/organizations/${slug}/branches/${branchId}/qrcode/`, {
-    params: { format: 'base64', origin: window.location.origin },
+    params: { format: 'base64', origin: PUBLIC_ORIGIN },
   }),
 
   // Branches: public read (active only, unless the caller can manage_branches

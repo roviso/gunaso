@@ -2,9 +2,10 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import path from 'path'
 
-export default defineConfig(({ command }) => ({
-  // Django serves the built assets under STATIC_URL; the dev server serves from root.
-  base: command === 'build' ? '/static/' : '/',
+export default defineConfig(({ command, mode }) => ({
+  // Django serves the built assets under STATIC_URL; the dev server and the
+  // native app (vite build --mode mobile) serve from root.
+  base: command === 'build' && mode !== 'mobile' ? '/static/' : '/',
   plugins: [vue()],
   resolve: {
     alias: {

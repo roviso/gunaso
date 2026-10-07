@@ -1,0 +1,15 @@
+{
+  "appId": "com.thimitech.gunaso",
+  "appName": "Gunaso",
+  "webDir": "dist",
+  "backgroundColor": "#1D3557",
+  "plugins": {
+    "CapacitorHttp": { "enabled": true },
+    "CapacitorCookies": { "enabled": true },
+    "SplashScreen": {
+      "launchAutoHide": false,
+      "backgroundColor": "#1D3557",
+      "showSpinner": false
+    }
+  }
+}

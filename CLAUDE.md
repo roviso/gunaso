@@ -41,6 +41,7 @@ citizens a structured, trackable channel to hold organizations accountable.
 | Frontend | Vue 3 (Composition API, `<script setup>`) + Vite + Pinia + Vue Router |
 | Styling | Tailwind CSS 3 |
 | Maps | Leaflet 1.9 + OpenStreetMap tiles (public `/map`, settings location picker) |
+| Mobile | Capacitor 8 wraps the same Vue build into Android + iOS apps (`android/`, `ios/`) — see INSTRUCTION.md |
 | Containerization | Docker + Docker Compose |
 | Reverse proxy | Nginx (single entry point, rate-limits auth endpoints) |
 | WSGI server | gunicorn (in Docker) |
@@ -475,7 +476,9 @@ a `${VAR:-default}` fallback: they're optional in `.env`, and an unset compose v
 arrives as an empty string, which would otherwise override the settings defaults and break
 the int/bool casts.
 
-Frontend: `VITE_API_BASE_URL` (keep it `/api/v1`).
+Frontend: `VITE_API_BASE_URL` (keep it `/api/v1` on web). The native build (`.env.mobile`) sets it to
+the absolute production API plus `VITE_PUBLIC_URL` (the public site origin used for QR/share links,
+since the app itself runs on `https://localhost`).
 
 When adding a new env var: document it in `.env.example` **and** here.
 

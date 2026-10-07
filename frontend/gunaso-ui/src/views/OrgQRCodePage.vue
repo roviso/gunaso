@@ -2,12 +2,13 @@
 import { computed, watch } from 'vue'
 import { useOrganizationStore } from '@/stores/organization'
 import QRCodeDisplay from '@/components/QRCodeDisplay.vue'
+import { PUBLIC_ORIGIN } from '@/api/index'
 
 const orgStore = useOrganizationStore()
 
 const slug = computed(() => orgStore.currentOrg?.slug)
 const orgName = computed(() => orgStore.currentOrg?.name || '')
-const submitUrl = computed(() => slug.value ? `${window.location.origin}/submit/${slug.value}` : '')
+const submitUrl = computed(() => slug.value ? `${PUBLIC_ORIGIN}/submit/${slug.value}` : '')
 const activeBranches = computed(() => orgStore.branches.filter((b) => b.is_active))
 
 // See OrgBranchesPage.vue: `slug` can still be resolving (OrgLayout fetches

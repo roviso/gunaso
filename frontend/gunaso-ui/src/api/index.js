@@ -14,6 +14,10 @@ export function getAccessToken() {
 
 const baseURL = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 
+// Origin of the public website — what QR codes and share links must point at.
+// The native app runs on https://localhost, so it sets VITE_PUBLIC_URL instead.
+export const PUBLIC_ORIGIN = import.meta.env.VITE_PUBLIC_URL || window.location.origin
+
 // 'ngrok-skip-browser-warning' bypasses the free-tier ngrok interstitial page,
 // which is otherwise returned as HTML in place of API JSON responses.
 const COMMON_HEADERS = { 'ngrok-skip-browser-warning': 'true' }

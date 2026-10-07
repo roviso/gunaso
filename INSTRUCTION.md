@@ -154,3 +154,45 @@ Before deploying, make sure:
 | CORS errors in console | Add your origin to `CORS_ALLOWED_ORIGINS` in `.env` and restart the backend |
 | Attachment rejected | Allowed: jpg, jpeg, png, gif, webp, pdf, doc, docx, ≤ 10MB (env `MAX_ATTACHMENT_SIZE_MB`) |
 | 429 Too Many Requests | You hit a throttle (auth 10/min, submissions 10/hour) — wait, or tune `THROTTLE_*` env vars |
+
+---
+
+## Mobile apps (Android + iOS)
+
+The Android and iOS apps are the **same Vue app** wrapped with Capacitor 8
+(`frontend/gunaso-ui/android/`, `frontend/gunaso-ui/ios/`). There is no separate mobile codebase:
+change the Vue code, rebuild, re-upload.
+
+- `vite build --mode mobile` reads `.env.mobile` (API `https://gunaaso.com/api/v1`, base `/`).
+- All requests go through **CapacitorHttp** (native), so there's no CORS and the httpOnly refresh
+  cookie lives in the native cookie jar. The auth flow is unchanged.
+- Native-only UI: bottom tab bar (`MobileTabBar.vue`), back button / system bars / splash
+  (`src/native.js`). Everything native-only is gated on the `html.native` class or `isNative`.
+
+**Prerequisites:** Node **22+** (Capacitor 8), JDK 21, Android SDK (platform 36). iOS needs a Mac with Xcode.
+
+> ⚠️ **Build Android outside OneDrive.** OneDrive turns synced files into reparse points, which
+> Gradle refuses to read ("Cannot snapshot … not a regular file"). Keep the repo in e.g. `C:\dev\gunaso`.
+
+### Android release (Play Store)
+
+```bash
+cd frontend/gunaso-ui
+npm run build:mobile                 # vite build --mode mobile && cap sync
+# bump versionCode (+1) and versionName in android/app/build.gradle
+cd android && ./gradlew bundleRelease
+# → android/app/build/outputs/bundle/release/app-release.aab → Play Console → Test and release
+```
+
+Signing: the upload key is **not in the repo**. `android/keystore.properties` (gitignored, see
+`keystore.properties.example`) points at the `.jks`. Back up the keystore and its password in a
+password manager. Play App Signing holds the real app-signing key, so a lost upload key can be reset
+through Play support, but that takes days.
+
+Dev loop: `npm run android` opens Android Studio. Run on an emulator or a USB device.
+
+### iOS (App Store)
+
+On a Mac: `npm ci && npm run ios`, set the Team + bundle id `com.thimitech.gunaso` in Xcode
+(Signing & Capabilities), then Product → Archive → Distribute. App icons/splash are already generated
+(`npx capacitor-assets generate` from `assets/`).
