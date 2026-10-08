@@ -54,6 +54,7 @@ class ContactMessage(models.Model):
         ('organization', 'Bring my organization to Gunaso'),
         ('support', 'Help with a submission'),
         ('press', 'Press & partnerships'),
+        ('child_safety', 'Child safety concern'),
         ('other', 'Something else'),
     ]
 

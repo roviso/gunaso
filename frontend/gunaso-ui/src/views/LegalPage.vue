@@ -4,7 +4,7 @@ import { computed } from 'vue'
 // Plain-language policies. They describe how the platform actually behaves
 // today (see CLAUDE.md) — update them whenever data handling changes.
 const props = defineProps({
-  page: { type: String, required: true }, // 'privacy' | 'terms'
+  page: { type: String, required: true }, // 'privacy' | 'terms' | 'child-safety'
 })
 
 const UPDATED = '30 September 2026'
@@ -124,6 +124,49 @@ const docs = {
       },
     ],
   },
+  'child-safety': {
+    title: 'Child safety standards',
+    intro: 'Gunaso has zero tolerance for child sexual abuse and exploitation (CSAE), including child sexual abuse material (CSAM). This page sets out the standards that apply to everyone who uses Gunaso — on the web and in our Android and iOS apps — and how we act on reports.',
+    sections: [
+      {
+        h: 'Our standard',
+        p: [
+          'Content or behaviour that sexualises, exploits, grooms or endangers children is strictly prohibited on Gunaso. This includes CSAM in any form — images, video, text or links — whether real, drawn or AI-generated.',
+          'Gunaso is a civic complaint platform for adults. It is not directed at children, and it has no public social feed, user-to-user messaging or dating features.',
+        ],
+      },
+      {
+        h: 'How to report a concern in the app',
+        p: [
+          'Open Contact us (in the site footer) and choose “Child safety concern”. Reports go straight to Gunaso platform staff, not to any organization, and you do not need an account to send one.',
+          'If you saw the content in a case, include its reference number (GUN-YYYY-NNNNN) so we can find it quickly.',
+          'You can also email our child safety point of contact directly at techthimi@gmail.com.',
+          'If a child is in immediate danger, contact local police first. In Nepal you can call Nepal Police on 100 or the child helpline on 1098.',
+        ],
+      },
+      {
+        h: 'What we do when we receive a report',
+        p: [
+          'Child safety reports are treated as the highest priority and reviewed by platform staff as quickly as possible.',
+          'Content that breaches this standard is removed from public view, and the accounts involved are blocked; blocking also ends their active sessions.',
+          'We preserve the relevant records and report apparent CSAM to the appropriate authorities — including Nepal Police and, where applicable, the National Center for Missing & Exploited Children (NCMEC) and other regional authorities — as required by law.',
+          'We cooperate with law enforcement requests made through proper legal channels.',
+        ],
+      },
+      {
+        h: 'Compliance with the law',
+        p: [
+          'Gunaso complies with applicable child safety laws, including the laws of Nepal and the requirements of the app stores that distribute our apps.',
+        ],
+      },
+      {
+        h: 'Child safety point of contact',
+        p: [
+          'Our designated child safety contact can speak to our CSAM prevention practices and compliance: techthimi@gmail.com.',
+        ],
+      },
+    ],
+  },
 }
 
 const doc = computed(() => docs[props.page] || docs.privacy)
@@ -155,7 +198,7 @@ const doc = computed(() => docs[props.page] || docs.privacy)
         <p class="font-semibold text-gray-900 dark:text-white">Questions about this page?</p>
         <p class="text-sm text-gray-600 dark:text-gray-300 mt-1">
           <RouterLink to="/contact" class="text-primary font-semibold hover:underline">Contact us</RouterLink> — a person will reply.
-          <template v-if="page === 'privacy'"> See also the <RouterLink to="/terms" class="text-primary hover:underline">terms of use</RouterLink>.</template>
+          <template v-if="page !== 'terms'"> See also the <RouterLink to="/terms" class="text-primary hover:underline">terms of use</RouterLink>.</template>
           <template v-else> See also the <RouterLink to="/privacy" class="text-primary hover:underline">privacy policy</RouterLink>.</template>
         </p>
       </div>

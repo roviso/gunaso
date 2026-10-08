@@ -13,6 +13,7 @@ const TOPICS = [
   { value: 'organization', label: 'Bring my organization to Gunaso' },
   { value: 'support', label: 'Help with a gunaso I filed' },
   { value: 'press', label: 'Press & partnerships' },
+  { value: 'child_safety', label: 'Child safety concern' },
   { value: 'other', label: 'Something else' },
 ]
 

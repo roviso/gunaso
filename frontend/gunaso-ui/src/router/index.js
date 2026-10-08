@@ -45,6 +45,7 @@ const routes = [
   },
   { path: '/privacy', name: 'Privacy', component: () => import('@/views/LegalPage.vue'), props: { page: 'privacy' }, meta: { title: 'Privacy policy' } },
   { path: '/terms', name: 'Terms', component: () => import('@/views/LegalPage.vue'), props: { page: 'terms' }, meta: { title: 'Terms of use' } },
+  { path: '/child-safety', name: 'ChildSafety', component: () => import('@/views/LegalPage.vue'), props: { page: 'child-safety' }, meta: { title: 'Child safety standards', description: 'Gunaso’s standards against child sexual abuse and exploitation, and how to report a concern.' } },
   {
     path: '/login', name: 'Login',
     component: () => import('@/views/LoginPage.vue'),

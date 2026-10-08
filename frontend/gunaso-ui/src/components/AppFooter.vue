@@ -21,6 +21,7 @@ const links = {
     { label: 'Contact us', to: '/contact' },
     { label: 'Privacy policy', to: '/privacy' },
     { label: 'Terms of use', to: '/terms' },
+    { label: 'Child safety', to: '/child-safety' },
   ],
 }
 </script>
